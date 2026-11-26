@@ -5,7 +5,17 @@ import { PrismaService } from '../prisma/prisma.service.js';
 
 describe('AgendamentosService', () => {
   const prisma = {
+    cliente: {
+      findFirst: vi.fn(),
+    },
+    profissional: {
+      findFirst: vi.fn(),
+    },
+    servico: {
+      findMany: vi.fn(),
+    },
     agendamento: {
+      create: vi.fn(),
       findMany: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
@@ -21,6 +31,26 @@ describe('AgendamentosService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('does not allow inactive professionals to receive appointments', async () => {
+    prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      nome: 'João',
+      ativo: false,
+    });
+
+    await expect(
+      service.create(3, {
+        clienteId: 2,
+        profissionalId: 7,
+        inicio: new Date(Date.now() + 60_000).toISOString(),
+        servicoIds: [9],
+      }),
+    ).rejects.toThrow('Profissional inativo não recebe agendamentos');
+
+    expect(prisma.agendamento.create).not.toHaveBeenCalled();
   });
 
   it('filters the agenda by company, professional, and UTC date', async () => {
@@ -45,7 +75,9 @@ describe('AgendamentosService', () => {
   it('does not expose an appointment from another company', async () => {
     prisma.agendamento.findFirst.mockResolvedValue(null);
 
-    await expect(service.findOne(3, 12)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.findOne(3, 12)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
 
     expect(prisma.agendamento.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 12, empresaId: 3 } }),
