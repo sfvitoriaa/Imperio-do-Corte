@@ -1,15 +1,35 @@
-import { IsInt, IsNotEmpty, IsNumber, IsPositive, IsString, Min } from "class-validator";
+import { Transform } from 'class-transformer';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
+
+const trimString = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim() : value;
 
 export class CreateServicoDto {
-    @IsString()
-    @IsNotEmpty()
-    nome: string;
+  @Transform(trimString)
+  @IsString()
+  @IsNotEmpty()
+  nome: string;
 
-    // @IsNumber({ maxDecimalPlaces: 2 })
-    @IsPositive()
-    preco: number;
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(191)
+  descricao?: string;
 
-    @IsInt()
-    @Min(5)
-    duracaoMin: number;
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  preco: number;
+
+  @IsInt()
+  @Min(5)
+  duracaoMin: number;
 }

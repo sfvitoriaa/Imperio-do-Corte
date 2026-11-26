@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  ParseIntPipe,
+  ParseBoolPipe,
+  Query,
+} from '@nestjs/common';
 import { ServicosService } from './servicos.service.js';
 import { CreateServicoDto } from './dto/create-servico.dto.js';
 import { UpdateServicoDto } from './dto/update-servico.dto.js';
@@ -6,27 +17,26 @@ import { EmpresaId } from '../common/empresa-id.decorator.js';
 
 @Controller('servicos')
 export class ServicosController {
-  constructor(private readonly servicosService: ServicosService) { }
+  constructor(private readonly servicosService: ServicosService) {}
 
   @Post()
-  create(
-    @EmpresaId() empresaId: number,
-    @Body() dto: CreateServicoDto
-  ) {
+  create(@EmpresaId() empresaId: number, @Body() dto: CreateServicoDto) {
     return this.servicosService.create(empresaId, dto);
   }
 
   @Get()
   findAll(
     @EmpresaId() empresaId: number,
+    @Query('ativos', new ParseBoolPipe({ optional: true })) ativos?: boolean,
   ) {
-    return this.servicosService.findAll(empresaId);
+    return this.servicosService.findAll(empresaId, ativos);
   }
 
   @Get(':id')
   findOne(
     @EmpresaId() empresaId: number,
-    @Param('id', ParseIntPipe) id: number) {
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return this.servicosService.findOne(empresaId, id);
   }
 
@@ -34,14 +44,16 @@ export class ServicosController {
   update(
     @EmpresaId() empresaId: number,
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateServicoDto) {
+    @Body() dto: UpdateServicoDto,
+  ) {
     return this.servicosService.update(empresaId, id, dto);
   }
 
   @Delete(':id')
   remove(
     @EmpresaId() empresaId: number,
-    @Param('id', ParseIntPipe) id: number) {
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return this.servicosService.remove(empresaId, id);
   }
 }

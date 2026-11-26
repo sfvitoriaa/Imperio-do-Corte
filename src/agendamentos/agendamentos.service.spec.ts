@@ -53,6 +53,60 @@ describe('AgendamentosService', () => {
     expect(prisma.agendamento.create).not.toHaveBeenCalled();
   });
 
+  it('does not use inactive services in new appointments', async () => {
+    prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      nome: 'João',
+      ativo: true,
+    });
+    prisma.servico.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.create(3, {
+        clienteId: 2,
+        profissionalId: 7,
+        inicio: new Date(Date.now() + 60_000).toISOString(),
+        servicoIds: [9],
+      }),
+    ).rejects.toThrow('Serviço não encontrado ou inativo nesta empresa');
+
+    expect(prisma.servico.findMany).toHaveBeenCalledWith({
+      where: { empresaId: 3, ativo: true, id: { in: [9] } },
+    });
+    expect(prisma.agendamento.create).not.toHaveBeenCalled();
+  });
+
+  it('saves the current service price as the appointment price snapshot', async () => {
+    prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      nome: 'João',
+      ativo: true,
+    });
+    prisma.servico.findMany.mockResolvedValue([
+      { id: 9, preco: 45.5, duracaoMin: 20 },
+    ]);
+    prisma.agendamento.findFirst.mockResolvedValue(null);
+
+    await service.create(3, {
+      clienteId: 2,
+      profissionalId: 7,
+      inicio: new Date(Date.now() + 60_000).toISOString(),
+      servicoIds: [9],
+    });
+
+    expect(prisma.agendamento.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          servicos: {
+            create: [{ servicoId: 9, precoCobrado: 45.5 }],
+          },
+        }),
+      }),
+    );
+  });
+
   it('filters the agenda by company, professional, and UTC date', async () => {
     prisma.agendamento.findMany.mockResolvedValue([]);
 

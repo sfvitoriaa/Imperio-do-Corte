@@ -55,11 +55,11 @@ export class AgendamentosService {
     }
 
     const servicos = await this.prisma.servico.findMany({
-      where: { empresaId, id: { in: dto.servicoIds } }
+      where: { empresaId, ativo: true, id: { in: dto.servicoIds } }
     })
 
     if (servicos.length !== dto.servicoIds.length) {
-      throw new NotFoundException("Serviço não encontrado nesta empresa")
+      throw new NotFoundException("Serviço não encontrado ou inativo nesta empresa")
     }
 
     const duracaoTotal = servicos.reduce((soma, s) => soma + s.duracaoMin, 0)
