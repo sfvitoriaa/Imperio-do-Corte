@@ -1,0 +1,115 @@
+POST http://localhost:3000/empresas
+Content-Type: application/json
+Test: Daniel
+
+{
+    "nome": "Barbearia do Renan",
+    "cnpj": "7Y.G43.BY2/0001-05"
+}
+
+### 
+
+GET http://localhost:3000/empresas
+
+###
+
+POST http://localhost:3000/clientes
+Content-Type: application/json
+
+{
+    "nome": "Daniel",
+    "telefone": "11999999990"
+}
+
+###
+GET http://localhost:3000/clientes
+Content-Type: application/json
+x-empresa-id: 1
+
+###
+GET http://localhost:3000/clientes/2
+Content-Type: application/json
+x-empresa-id: 2
+
+###
+PATCH http://localhost:3000/clientes/1
+Content-Type: application/json
+x-empresa-id: 1
+
+{
+    "nome": "Hugo Lagrimante"
+}
+
+###
+DELETE http://localhost:3000/clientes/1
+Content-Type: application/json
+x-empresa-id: 1
+
+###
+POST http://localhost:3000/profissionais
+Content-Type: application/json
+x-empresa-id: 1
+
+{
+    "nome": "Daniel"
+}
+
+###
+GET http://localhost:3000/profissionais?ativos=true 
+Content-Type: application/json
+x-empresa-id: 1
+
+###
+PATCH http://localhost:3000/profissionais/6 
+Content-Type: application/json
+x-empresa-id: 1
+
+{
+    "ativo": false
+}
+
+###
+GET http://localhost:3000/profissionais/7
+Content-Type: application/json
+x-empresa-id: 1
+
+
+---
+
+###
+POST http://localhost:3000/servicos
+Content-Type: application/json
+x-empresa-id: 1
+
+{
+    "nome": "Barba",
+    "preco": 40.00,
+    "duracaoMin": 20
+}
+
+
+### 
+PATCH http://localhost:3000/servicos/3
+Content-Type: application/json
+x-empresa-id: 1
+
+{
+    "preco": 45.00
+}
+
+###
+GET http://localhost:3000/servicos
+Content-Type: application/json
+x-empresa-id: 1
+
+### 
+POST http://localhost:3000/agendamentos
+Content-Type: application/json
+x-empresa-id: 1
+
+{
+    "clienteId": 2,
+    "profissionalId": 1,
+    "inicio": "2026-11-13T21:00:00-03:00",
+    "servicoIds": [2,3]
+}
