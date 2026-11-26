@@ -13,6 +13,7 @@ describe('AgendamentosService', () => {
     },
     servico: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
     },
     agendamento: {
       create: vi.fn(),
@@ -25,6 +26,7 @@ describe('AgendamentosService', () => {
     },
     indisponibilidadeProfissional: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
     },
   };
   const empresas = {
@@ -43,6 +45,7 @@ describe('AgendamentosService', () => {
       intervalos: [],
     });
     prisma.indisponibilidadeProfissional.findFirst.mockResolvedValue(null);
+    prisma.indisponibilidadeProfissional.findMany.mockResolvedValue([]);
   });
 
   it('does not allow inactive professionals to receive appointments', async () => {
@@ -220,5 +223,119 @@ describe('AgendamentosService', () => {
     ).rejects.toThrow('Profissional folgado ou indisponível neste período');
 
     expect(prisma.agendamento.create).not.toHaveBeenCalled();
+  });
+
+  it('returns only free slots considering service duration and work hours', async () => {
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      nome: 'João',
+      ativo: true,
+    });
+    prisma.servico.findFirst.mockResolvedValue({
+      id: 9,
+      duracaoMin: 60,
+      ativo: true,
+    });
+    prisma.horarioProfissional.findFirst.mockResolvedValue({
+      inicio: '09:00',
+      fim: '12:00',
+      intervalos: [],
+    });
+    prisma.agendamento.findMany.mockResolvedValue([]);
+
+    const horarios = await service.consultarDisponibilidade(3, {
+      profissionalId: 7,
+      servicoId: 9,
+      data: '2027-01-10',
+    });
+
+    expect(horarios).toEqual(['09:00', '09:30', '10:00', '10:30', '11:00']);
+  });
+
+  it('removes occupied slots and overlapping breaks', async () => {
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      ativo: true,
+    });
+    prisma.servico.findFirst.mockResolvedValue({
+      id: 9,
+      duracaoMin: 60,
+      ativo: true,
+    });
+    prisma.horarioProfissional.findFirst.mockResolvedValue({
+      inicio: '09:00',
+      fim: '13:00',
+      intervalos: [{ inicio: '11:00', fim: '12:00' }],
+    });
+    prisma.agendamento.findMany.mockResolvedValue([
+      {
+        inicio: new Date('2027-01-10T09:30:00.000Z'),
+        fim: new Date('2027-01-10T10:30:00.000Z'),
+      },
+    ]);
+
+    const horarios = await service.consultarDisponibilidade(3, {
+      profissionalId: 7,
+      servicoId: 9,
+      data: '2027-01-10',
+    });
+
+    expect(horarios).not.toContain('09:00');
+    expect(horarios).not.toContain('09:30');
+    expect(horarios).not.toContain('10:30');
+    expect(horarios).not.toContain('11:00');
+  });
+
+  it('returns no slots for an unavailable professional or without a work shift', async () => {
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      ativo: false,
+    });
+
+    await expect(
+      service.consultarDisponibilidade(3, {
+        profissionalId: 7,
+        servicoId: 9,
+        data: '2027-01-10',
+      }),
+    ).resolves.toEqual([]);
+
+    prisma.profissional.findFirst.mockResolvedValue({ id: 7, ativo: true });
+    prisma.servico.findFirst.mockResolvedValue({ id: 9, duracaoMin: 30, ativo: true });
+    prisma.horarioProfissional.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.consultarDisponibilidade(3, {
+        profissionalId: 7,
+        servicoId: 9,
+        data: '2027-01-10',
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('removes slots overlapping a registered time off period', async () => {
+    prisma.profissional.findFirst.mockResolvedValue({ id: 7, ativo: true });
+    prisma.servico.findFirst.mockResolvedValue({ id: 9, duracaoMin: 30, ativo: true });
+    prisma.horarioProfissional.findFirst.mockResolvedValue({
+      inicio: '09:00',
+      fim: '12:00',
+      intervalos: [],
+    });
+    prisma.indisponibilidadeProfissional.findMany.mockResolvedValue([
+      {
+        inicio: new Date('2027-01-10T10:00:00.000Z'),
+        fim: new Date('2027-01-10T11:00:00.000Z'),
+      },
+    ]);
+    prisma.agendamento.findMany.mockResolvedValue([]);
+
+    const horarios = await service.consultarDisponibilidade(3, {
+      profissionalId: 7,
+      servicoId: 9,
+      data: '2027-01-10',
+    });
+
+    expect(horarios).not.toContain('10:00');
+    expect(horarios).not.toContain('10:30');
   });
 });

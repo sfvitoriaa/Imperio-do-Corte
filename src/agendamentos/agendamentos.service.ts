@@ -4,6 +4,7 @@ import { AgendaQueryDto } from './dto/agenda-query.dto.js';
 import { UpdateStatusDto } from './dto/update-status.dto.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EmpresasService } from '../empresas/empresas.service.js';
+import { DisponibilidadeQueryDto } from './dto/disponibilidade-query.dto.js';
 
 const DETALHES = {
   cliente: { select: { id: true, nome: true, telefone: true } },
@@ -29,6 +30,147 @@ export class AgendamentosService {
   private horaParaMinutos(hora: string) {
     const [h, m] = hora.split(':').map(Number)
     return h * 60 + m
+  }
+
+  async consultarDisponibilidade(
+    empresaId: number,
+    query: DisponibilidadeQueryDto,
+  ) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(query.data)) {
+      throw new BadRequestException('data deve estar no formato AAAA-MM-DD');
+    }
+
+    const dia = new Date(`${query.data}T00:00:00.000Z`);
+    if (Number.isNaN(dia.getTime()) || dia.toISOString().slice(0, 10) !== query.data) {
+      throw new BadRequestException('Data inválida');
+    }
+
+    const profissional = await this.prisma.profissional.findFirst({
+      where: { id: query.profissionalId, empresaId },
+    });
+    if (!profissional) {
+      throw new NotFoundException('Profissional não encontrado nesta empresa');
+    }
+    if (!profissional.ativo) {
+      return [];
+    }
+
+    let duracao: number;
+    if (query.servicoId) {
+      const servico = await this.prisma.servico.findFirst({
+        where: { id: query.servicoId, empresaId, ativo: true },
+      });
+      if (!servico) {
+        throw new NotFoundException('Serviço não encontrado ou inativo nesta empresa');
+      }
+      duracao = servico.duracaoMin;
+    } else if (query.servicoIds?.length) {
+      const servicos = await this.prisma.servico.findMany({
+        where: { id: { in: query.servicoIds }, empresaId, ativo: true },
+      });
+      if (servicos.length !== query.servicoIds.length) {
+        throw new NotFoundException('Serviço não encontrado ou inativo nesta empresa');
+      }
+      duracao = servicos.reduce((total, servico) => total + servico.duracaoMin, 0);
+    } else {
+      throw new NotFoundException('Serviço não encontrado ou inativo nesta empresa');
+    }
+
+    const horarioDelegate = (this.prisma as unknown as {
+      horarioProfissional?: { findFirst: (args: unknown) => Promise<any> };
+    }).horarioProfissional;
+
+    if (!horarioDelegate?.findFirst) {
+      return [];
+    }
+
+    const horario = await horarioDelegate.findFirst({
+      where: {
+        empresaId,
+        profissionalId: query.profissionalId,
+        diaSemana: dia.getUTCDay(),
+      },
+      include: { intervalos: true },
+    });
+    if (!horario) {
+      return [];
+    }
+
+    const fimDia = new Date(dia.getTime() + 24 * 60 * 60 * 1000);
+    const indisponibilidadeDelegate = (this.prisma as unknown as {
+      indisponibilidadeProfissional?: { findMany: (args: unknown) => Promise<any[]> };
+    }).indisponibilidadeProfissional;
+    const indisponibilidades = indisponibilidadeDelegate?.findMany
+      ? await indisponibilidadeDelegate.findMany({
+          where: {
+            empresaId,
+            profissionalId: query.profissionalId,
+            inicio: { lt: fimDia },
+            fim: { gt: dia },
+          },
+        })
+      : [];
+
+    const agendamentos = await this.prisma.agendamento.findMany({
+      where: {
+        empresaId,
+        profissionalId: query.profissionalId,
+        status: 'AGENDADO',
+        inicio: { gte: dia, lt: fimDia },
+      },
+      select: { inicio: true, fim: true },
+    });
+
+    const inicioJornada = this.horaParaMinutos(horario.inicio);
+    const fimJornada = this.horaParaMinutos(horario.fim);
+    const horariosDisponiveis: string[] = [];
+
+    for (let inicioMin = inicioJornada; inicioMin + duracao <= fimJornada; inicioMin += 30) {
+      const fimMin = inicioMin + duracao;
+      const inicioSlot = new Date(dia.getTime() + inicioMin * 60_000);
+      const fimSlot = new Date(dia.getTime() + fimMin * 60_000);
+
+      if (fimSlot <= new Date()) {
+        continue;
+      }
+
+      const coincideIntervalo = (horario.intervalos ?? []).some(
+        (intervalo: { inicio: string; fim: string }) =>
+          inicioMin < this.horaParaMinutos(intervalo.fim) &&
+          this.horaParaMinutos(intervalo.inicio) < fimMin,
+      );
+      if (coincideIntervalo) {
+        continue;
+      }
+
+      const coincideFolga = indisponibilidades.some((indisponibilidade) =>
+        inicioSlot < new Date(indisponibilidade.fim) &&
+        new Date(indisponibilidade.inicio) < fimSlot,
+      );
+      if (coincideFolga) {
+        continue;
+      }
+
+      const coincideAgendamento = agendamentos.some((agendamento) =>
+        inicioSlot < new Date(agendamento.fim) &&
+        new Date(agendamento.inicio) < fimSlot,
+      );
+      if (coincideAgendamento) {
+        continue;
+      }
+
+      const hora = Math.floor(inicioMin / 60).toString().padStart(2, '0');
+      const minuto = (inicioMin % 60).toString().padStart(2, '0');
+      horariosDisponiveis.push(`${hora}:${minuto}`);
+    }
+
+    return horariosDisponiveis;
+  }
+
+  async disponibilidade(empresaId: number, query: DisponibilidadeQueryDto) {
+    return this.consultarDisponibilidade(empresaId, query);
   }
 
   async create(empresaId: number, dto: CreateAgendamentoDto) {

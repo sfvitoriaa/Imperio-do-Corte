@@ -4,6 +4,7 @@ import { CreateAgendamentoDto } from './dto/create-agendamento.dto.js';
 import { AgendaQueryDto } from './dto/agenda-query.dto.js';
 import { UpdateStatusDto } from './dto/update-status.dto.js';
 import { EmpresaId } from '../common/empresa-id.decorator.js';
+import { DisponibilidadeQueryDto } from './dto/disponibilidade-query.dto.js';
 
 @Controller('agendamentos')
 export class AgendamentosController {
@@ -17,6 +18,14 @@ export class AgendamentosController {
   @Get()
   findAll(@EmpresaId() empresaId: number, @Query() query: AgendaQueryDto) {
     return this.agendamentosService.findAll(empresaId, query);
+  }
+
+  @Get('disponibilidade')
+  consultarDisponibilidade(
+    @EmpresaId() empresaId: number,
+    @Query() query: DisponibilidadeQueryDto,
+  ) {
+    return this.agendamentosService.consultarDisponibilidade(empresaId, query);
   }
 
   @Get(':id')
