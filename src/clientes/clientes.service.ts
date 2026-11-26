@@ -1,5 +1,10 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateClienteDto } from './dto/create-cliente.dto.js';
+import { ClienteQueryDto } from './dto/cliente-query.dto.js';
 import { UpdateClienteDto } from './dto/update-cliente.dto.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EmpresasService } from '../empresas/empresas.service.js';
@@ -8,42 +13,50 @@ import { EmpresasService } from '../empresas/empresas.service.js';
 export class ClientesService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly empresas: EmpresasService
-  ) { }
+    private readonly empresas: EmpresasService,
+  ) {}
 
   async create(empresaId: number, dto: CreateClienteDto) {
     await this.empresas.validarEmpresaAtiva(empresaId);
     await this.validaTelefoneDisponivel(empresaId, dto.telefone);
 
     return this.prisma.cliente.create({
-      data: { ...dto, empresaId }
-    })
-
-  }
-
-  async findAll(empresaId: number) {
-    await this.empresas.validarEmpresaAtiva(empresaId);
-
-    return this.prisma.cliente.findMany({
-      where: { empresaId }
+      data: { ...dto, empresaId },
     });
   }
 
-  async findOne(data: { id: number, empresaId: number }) {
-    const { id, empresaId } = data
-
+  async findAll(empresaId: number, query: ClienteQueryDto = {}) {
     await this.empresas.validarEmpresaAtiva(empresaId);
 
-    const cliente = await this.validaCliente(empresaId, id)
-
-    return cliente
+    return this.prisma.cliente.findMany({
+      where: {
+        empresaId,
+        nome: query.nome ? { contains: query.nome } : undefined,
+        telefone: query.telefone ? { contains: query.telefone } : undefined,
+      },
+      orderBy: { nome: 'asc' },
+    });
   }
 
-  async update(data: { id: number, clienteData: UpdateClienteDto, empresaId: number }) {
-    const { clienteData, empresaId, id } = data
+  async findOne(data: { id: number; empresaId: number }) {
+    const { id, empresaId } = data;
+
     await this.empresas.validarEmpresaAtiva(empresaId);
 
-    await this.validaCliente(empresaId, id)
+    const cliente = await this.validaCliente(empresaId, id);
+
+    return cliente;
+  }
+
+  async update(data: {
+    id: number;
+    clienteData: UpdateClienteDto;
+    empresaId: number;
+  }) {
+    const { clienteData, empresaId, id } = data;
+    await this.empresas.validarEmpresaAtiva(empresaId);
+
+    await this.validaCliente(empresaId, id);
     if (clienteData.telefone !== undefined) {
       await this.validaTelefoneDisponivel(empresaId, clienteData.telefone, id);
     }
@@ -52,57 +65,51 @@ export class ClientesService {
       data: clienteData,
       where: {
         id,
-        empresaId
-      }
-    })
-
-
+        empresaId,
+      },
+    });
   }
 
-  async remove(data: { id: number, empresaId: number }) {
-    const { id, empresaId } = data
+  async remove(data: { id: number; empresaId: number }) {
+    const { id, empresaId } = data;
 
     await this.empresas.validarEmpresaAtiva(empresaId);
-    await this.validaCliente(empresaId, id)
+    await this.validaCliente(empresaId, id);
 
     return this.prisma.cliente.delete({
       where: {
         empresaId,
-        id
-      }
-    })
-
+        id,
+      },
+    });
   }
 
-  private async validaCliente(
-    empresaId: number,
-    id: number
-  ) {
+  private async validaCliente(empresaId: number, id: number) {
     const cliente = await this.prisma.cliente.findFirst({
       where: {
         id,
-        empresaId
-      }
-    })
+        empresaId,
+      },
+    });
 
     if (!cliente) {
-      throw new NotFoundException('Cliente não encontrado')
+      throw new NotFoundException('Cliente não encontrado');
     }
 
-    return cliente
+    return cliente;
   }
 
   private async validaTelefoneDisponivel(
     empresaId: number,
     telefone: string,
-    ignorarId?: number
+    ignorarId?: number,
   ) {
     const existe = await this.prisma.cliente.findUnique({
-      where: { empresaId_telefone: { empresaId, telefone } }
-    })
+      where: { empresaId_telefone: { empresaId, telefone } },
+    });
 
     if (existe && existe.id !== ignorarId) {
-      throw new ConflictException('Telefone já cadastrado nesta empresa')
+      throw new ConflictException('Telefone já cadastrado nesta empresa');
     }
   }
 }

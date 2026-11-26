@@ -15,6 +15,7 @@ GET http://localhost:3000/empresas
 
 POST http://localhost:3000/clientes
 Content-Type: application/json
+x-empresa-id: 1
 
 {
     "nome": "Daniel",
@@ -23,6 +24,16 @@ Content-Type: application/json
 
 ###
 GET http://localhost:3000/clientes
+Content-Type: application/json
+x-empresa-id: 1
+
+###
+GET http://localhost:3000/clientes?nome=Daniel
+Content-Type: application/json
+x-empresa-id: 1
+
+###
+GET http://localhost:3000/clientes?telefone=1199
 Content-Type: application/json
 x-empresa-id: 1
 

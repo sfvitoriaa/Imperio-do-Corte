@@ -1,35 +1,49 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  ParseIntPipe,
+  Query,
+} from '@nestjs/common';
 import { ClientesService } from './clientes.service.js';
 import { CreateClienteDto } from './dto/create-cliente.dto.js';
+import { ClienteQueryDto } from './dto/cliente-query.dto.js';
 import { UpdateClienteDto } from './dto/update-cliente.dto.js';
 import { EmpresaId } from '../common/empresa-id.decorator.js';
 
 @Controller('clientes')
 export class ClientesController {
-  constructor(private readonly clientesService: ClientesService) { }
+  constructor(private readonly clientesService: ClientesService) {}
 
   @Post()
   create(@EmpresaId() empresaId: number, @Body() dto: CreateClienteDto) {
-    return this.clientesService.create(empresaId, dto)
+    return this.clientesService.create(empresaId, dto);
   }
 
   @Get()
-  findAll(@EmpresaId() empresaId: number) {
-    return this.clientesService.findAll(empresaId);
+  findAll(@EmpresaId() empresaId: number, @Query() query: ClienteQueryDto) {
+    return this.clientesService.findAll(empresaId, query);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number, @EmpresaId() empresaId: number) {
-    return this.clientesService.findOne({ id, empresaId })
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @EmpresaId() empresaId: number,
+  ) {
+    return this.clientesService.findOne({ id, empresaId });
   }
 
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
     @EmpresaId() empresaId: number,
-    @Body() dto: UpdateClienteDto
+    @Body() dto: UpdateClienteDto,
   ) {
-    return this.clientesService.update({ id, empresaId, clienteData: dto })
+    return this.clientesService.update({ id, empresaId, clienteData: dto });
   }
 
   @Delete(':id')
@@ -37,6 +51,6 @@ export class ClientesController {
     @Param('id', ParseIntPipe) id: number,
     @EmpresaId() empresaId: number,
   ) {
-    return this.clientesService.remove({ id, empresaId })
+    return this.clientesService.remove({ id, empresaId });
   }
 }
