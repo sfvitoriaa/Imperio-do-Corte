@@ -20,6 +20,12 @@ describe('AgendamentosService', () => {
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    horarioProfissional: {
+      findFirst: vi.fn(),
+    },
+    indisponibilidadeProfissional: {
+      findFirst: vi.fn(),
+    },
   };
   const empresas = {
     validarEmpresaAtiva: vi.fn().mockResolvedValue({}),
@@ -31,6 +37,12 @@ describe('AgendamentosService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    prisma.horarioProfissional.findFirst.mockResolvedValue({
+      inicio: '00:00',
+      fim: '23:59',
+      intervalos: [],
+    });
+    prisma.indisponibilidadeProfissional.findFirst.mockResolvedValue(null);
   });
 
   it('does not allow inactive professionals to receive appointments', async () => {
@@ -156,5 +168,57 @@ describe('AgendamentosService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(prisma.agendamento.update).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule during a professional break', async () => {
+    prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      nome: 'João',
+      ativo: true,
+    });
+    prisma.servico.findMany.mockResolvedValue([
+      { id: 9, preco: 45.5, duracaoMin: 30 },
+    ]);
+    prisma.horarioProfissional.findFirst.mockResolvedValue({
+      inicio: '09:00',
+      fim: '18:00',
+      intervalos: [{ inicio: '12:00', fim: '13:00' }],
+    });
+
+    await expect(
+      service.create(3, {
+        clienteId: 2,
+        profissionalId: 7,
+        inicio: '2026-11-30T12:15:00.000Z',
+        servicoIds: [9],
+      }),
+    ).rejects.toThrow('Agendamento coincide com um intervalo');
+
+    expect(prisma.agendamento.create).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule during a registered time off period', async () => {
+    prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      nome: 'João',
+      ativo: true,
+    });
+    prisma.servico.findMany.mockResolvedValue([
+      { id: 9, preco: 45.5, duracaoMin: 20 },
+    ]);
+    prisma.indisponibilidadeProfissional.findFirst.mockResolvedValue({ id: 31 });
+
+    await expect(
+      service.create(3, {
+        clienteId: 2,
+        profissionalId: 7,
+        inicio: '2026-11-30T15:00:00.000Z',
+        servicoIds: [9],
+      }),
+    ).rejects.toThrow('Profissional folgado ou indisponível neste período');
+
+    expect(prisma.agendamento.create).not.toHaveBeenCalled();
   });
 });

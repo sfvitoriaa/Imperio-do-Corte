@@ -15,6 +15,23 @@ describe('ProfissionaisService', () => {
     agendamento: {
       count: vi.fn(),
     },
+    horarioProfissional: {
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+      upsert: vi.fn(),
+    },
+    intervaloHorario: {
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+      create: vi.fn(),
+    },
+    indisponibilidadeProfissional: {
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(),
   };
   const empresas = {
     validarEmpresaAtiva: vi.fn(),
@@ -120,5 +137,68 @@ describe('ProfissionaisService', () => {
     expect(prisma.profissional.delete).toHaveBeenCalledWith({
       where: { empresaId: 3, id: 8 },
     });
+  });
+
+  it('rejects an invalid work shift', async () => {
+    prisma.profissional.findUnique.mockResolvedValue(profissional);
+
+    await expect(
+      service.definirHorarios(3, 8, {
+        diaSemana: 1,
+        inicio: '18:00',
+        fim: '08:00',
+      }),
+    ).rejects.toThrow('O horário de início deve ser anterior ao horário de término');
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects intervals outside the work shift', async () => {
+    prisma.profissional.findUnique.mockResolvedValue(profissional);
+
+    await expect(
+      service.definirHorarios(3, 8, {
+        diaSemana: 1,
+        inicio: '09:00',
+        fim: '18:00',
+        intervalos: [{ inicio: '17:30', fim: '18:30' }],
+      }),
+    ).rejects.toThrow('Intervalos inválidos ou fora da jornada');
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects overlapping booked breaks', async () => {
+    prisma.profissional.findUnique.mockResolvedValue(profissional);
+    prisma.horarioProfissional.findFirst.mockResolvedValue({
+      id: 21,
+      inicio: '09:00',
+      fim: '18:00',
+      intervalos: [{ inicio: '12:00', fim: '13:00' }],
+    });
+
+    await expect(
+      service.cadastrarIntervalo(3, 8, 21, {
+        inicio: '12:30',
+        fim: '13:30',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(prisma.intervaloHorario.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects overlapping time off periods', async () => {
+    prisma.profissional.findUnique.mockResolvedValue(profissional);
+    prisma.indisponibilidadeProfissional.findFirst.mockResolvedValue({ id: 31 });
+
+    await expect(
+      service.registrarFolga(3, 8, {
+        tipo: 'FOLGA',
+        inicio: '2026-11-30T00:00:00.000Z',
+        fim: '2026-12-01T00:00:00.000Z',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(prisma.indisponibilidadeProfissional.create).not.toHaveBeenCalled();
   });
 });

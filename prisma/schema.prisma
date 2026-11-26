@@ -23,6 +23,8 @@ model Empresa {
   profissionais Profissional[]
   servicos      Servico[]
   agendamentos  Agendamento[]
+  horarios      HorarioProfissional[]
+  indisponibilidades IndisponibilidadeProfissional[]
 
   @@map("empresas")
 }
@@ -47,8 +49,48 @@ model Profissional {
   empresa      Empresa?      @relation(fields: [empresaId], references: [id])
   empresaId    Int?
   agendamentos Agendamento[]
+  horarios     HorarioProfissional[]
+  indisponibilidades IndisponibilidadeProfissional[]
 
   @@map("profissionais")
+}
+
+model HorarioProfissional {
+  id             Int                    @id @default(autoincrement())
+  diaSemana      Int
+  inicio         String
+  fim            String
+  profissional   Profissional           @relation(fields: [profissionalId], references: [id], onDelete: Cascade)
+  profissionalId Int
+  empresa        Empresa?               @relation(fields: [empresaId], references: [id])
+  empresaId      Int?
+  intervalos     IntervaloHorario[]
+
+  @@unique([profissionalId, empresaId, diaSemana])
+  @@map("horarios_profissionais")
+}
+
+model IntervaloHorario {
+  id        Int                @id @default(autoincrement())
+  inicio    String
+  fim       String
+  horario   HorarioProfissional @relation(fields: [horarioId], references: [id], onDelete: Cascade)
+  horarioId Int
+
+  @@map("intervalos_horarios")
+}
+
+model IndisponibilidadeProfissional {
+  id             Int          @id @default(autoincrement())
+  tipo           String
+  inicio         DateTime
+  fim            DateTime
+  profissional   Profissional @relation(fields: [profissionalId], references: [id], onDelete: Cascade)
+  profissionalId Int
+  empresa        Empresa?     @relation(fields: [empresaId], references: [id])
+  empresaId      Int?
+
+  @@map("indisponibilidades_profissionais")
 }
 
 model Servico {
