@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, ParseBoolPipe } from '@nestjs/common';
 import { ProfissionaisService } from './profissionais.service.js';
 import { CreateProfissionaisDto } from './dto/create-profissional.dto.js';
 import { UpdateProfissionaisDto } from './dto/update-profissional.dto.js';
@@ -16,9 +16,9 @@ export class ProfissionaisController {
   @Get()
   findAll(
     @EmpresaId() empresaId: number,
-    @Query('ativos') ativos?: string
+    @Query('ativos', new ParseBoolPipe({ optional: true })) ativos?: boolean
   ) {
-    return this.profissionaisService.findAll(empresaId, ativos === 'true');
+    return this.profissionaisService.findAll(empresaId, ativos);
   }
 
   @Get(':id')

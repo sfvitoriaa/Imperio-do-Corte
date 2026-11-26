@@ -7,7 +7,12 @@ export class PrismaService
     extends PrismaClient
     implements OnModuleInit, OnModuleDestroy {
     constructor() {
-        const adapter = new PrismaMariaDb(process.env.DATABASE_URL!)
+        const databaseUrl = process.env.DATABASE_URL;
+        if (!databaseUrl) {
+            throw new Error('DATABASE_URL must be set to connect to the database');
+        }
+
+        const adapter = new PrismaMariaDb(databaseUrl)
         super({ adapter });
     }
 

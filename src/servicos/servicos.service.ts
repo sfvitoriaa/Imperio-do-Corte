@@ -53,9 +53,10 @@ export class ServicosService {
 
   async remove(empresaId: number, id: number) {
     await this.empresas.validarEmpresaAtiva(empresaId)
+    await this.findOne(empresaId, id)
 
     const usos = await this.prisma.agendamentoServico.count({
-      where: { empresaId, servicoId: id }
+      where: { servicoId: id }
     })
 
     if (usos > 0) {

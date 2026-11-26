@@ -44,6 +44,9 @@ export class ClientesService {
     await this.empresas.validarEmpresaAtiva(empresaId);
 
     await this.validaCliente(empresaId, id)
+    if (clienteData.telefone !== undefined) {
+      await this.validaTelefoneDisponivel(empresaId, clienteData.telefone, id);
+    }
 
     return this.prisma.cliente.update({
       data: clienteData,

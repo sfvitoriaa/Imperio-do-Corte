@@ -19,11 +19,11 @@ export class ProfissionaisService {
     })
   }
 
-  async findAll(empresaId: number, ativos: boolean) {
+  async findAll(empresaId: number, ativos?: boolean) {
     await this.empresas.validarEmpresaAtiva(empresaId);
 
     return this.prisma.profissional.findMany({
-      where: { empresaId, ativo: ativos ? true : undefined },
+      where: { empresaId, ativo: ativos },
       orderBy: { nome: 'asc' }
     })
   }

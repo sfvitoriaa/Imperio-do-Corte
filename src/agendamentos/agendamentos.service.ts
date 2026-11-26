@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateAgendamentoDto } from './dto/create-agendamento.dto.js';
+import { AgendaQueryDto } from './dto/agenda-query.dto.js';
 import { UpdateStatusDto } from './dto/update-status.dto.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EmpresasService } from '../empresas/empresas.service.js';
@@ -98,19 +99,59 @@ export class AgendamentosService {
     });
   }
 
-  findAll() {
-    return `This action returns all agendamentos`;
+  async findAll(empresaId: number, query: AgendaQueryDto) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+
+    const inicio = query.data ? new Date(`${query.data}T00:00:00.000Z`) : undefined;
+    const fim = inicio ? new Date(inicio.getTime() + 24 * 60 * 60 * 1000) : undefined;
+
+    return this.prisma.agendamento.findMany({
+      where: {
+        empresaId,
+        profissionalId: query.profissionalId,
+        inicio: inicio && fim ? { gte: inicio, lt: fim } : undefined,
+      },
+      include: DETALHES,
+      orderBy: { inicio: 'asc' },
+    });
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} agendamento`;
+  async findOne(empresaId: number, id: number) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+
+    const agendamento = await this.prisma.agendamento.findFirst({
+      where: { id, empresaId },
+      include: DETALHES,
+    });
+
+    if (!agendamento) {
+      throw new NotFoundException('Agendamento não encontrado');
+    }
+
+    return agendamento;
   }
 
-  atualizarStatus(id: number, updateAgendamentoDto: UpdateStatusDto) {
-    return `This action updates a #${id} agendamento`;
+  async atualizarStatus(empresaId: number, id: number, dto: UpdateStatusDto) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+
+    const agendamento = await this.findOne(empresaId, id);
+    if (agendamento.status !== 'AGENDADO') {
+      throw new ConflictException('O status do agendamento já foi finalizado');
+    }
+
+    return this.prisma.agendamento.update({
+      where: { id, empresaId },
+      data: { status: dto.status },
+      include: DETALHES,
+    });
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} agendamento`;
+  async remove(empresaId: number, id: number) {
+    await this.findOne(empresaId, id);
+
+    return this.prisma.$transaction(async (prisma) => {
+      await prisma.agendamentoServico.deleteMany({ where: { agendamentoId: id } });
+      return prisma.agendamento.delete({ where: { id, empresaId } });
+    });
   }
 }

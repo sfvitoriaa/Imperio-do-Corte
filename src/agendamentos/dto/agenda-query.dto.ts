@@ -1,13 +1,15 @@
 import { Type } from "class-transformer";
-import { IsInt, Matches } from "class-validator";
+import { IsDateString, IsInt, IsOptional } from "class-validator";
 
 export class AgendaQueryDto {
+    @IsOptional()
     @Type(() => Number)
     @IsInt()
-    profissionalId: number;
+    profissionalId?: number;
 
-    @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    @IsOptional()
+    @IsDateString({ strict: true }, {
         message: "data deve estar no formato AAAA-MM-DD",
     })
-    data: string;
+    data?: string;
 }
