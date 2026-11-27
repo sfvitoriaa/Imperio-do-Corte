@@ -33,6 +33,10 @@ const SELECTED_COMPANY_KEY = 'barbercut:selected-company';
 
 let selectedCompany = null;
 let appointmentsLoadSequence = 0;
+let notificationCache = null;
+let notificationRequest = null;
+let notificationCenterItems = [];
+let notificationBellErrorCompany = null;
 
 try {
   selectedCompany = JSON.parse(localStorage.getItem(SELECTED_COMPANY_KEY));
@@ -89,6 +93,91 @@ async function apiFetch(path, options = {}) {
   }
 
   return response.json();
+}
+
+function notificationKey(notification) {
+  const data = notification.dados || {};
+  return [
+    notification.tipo,
+    notification.referenciaId,
+    data.id || '',
+    data.criadoEm || '',
+  ].join(':');
+}
+
+function readSeenNotifications(companyId) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(`barbercut:notifications:seen:${companyId}`) || '[]');
+    return new Set(Array.isArray(stored) ? stored : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenNotifications(companyId, seen) {
+  try {
+    localStorage.setItem(`barbercut:notifications:seen:${companyId}`, JSON.stringify([...seen]));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getNotifications(forceRefresh = false) {
+  const companyId = selectedCompany?.id;
+  if (!companyId) return [];
+  if (!forceRefresh && notificationCache?.companyId === companyId &&
+      Date.now() - notificationCache.loadedAt < 30_000) {
+    return notificationCache.items;
+  }
+  if (notificationRequest?.companyId === companyId) {
+    return notificationRequest.promise;
+  }
+
+  const request = { companyId, promise: null };
+  request.promise = apiFetch('/notificacoes').then((notifications) => {
+    if (!Array.isArray(notifications)) throw new Error('A API retornou uma lista de notificações inválida.');
+    if (selectedCompany?.id === companyId) {
+      notificationCache = { companyId, items: notifications, loadedAt: Date.now() };
+    }
+    return notifications;
+  });
+  notificationRequest = request;
+  try {
+    return await request.promise;
+  } finally {
+    if (notificationRequest === request) notificationRequest = null;
+  }
+}
+
+async function updateNotificationBell() {
+  const button = document.querySelector('#notification-button');
+  const badge = document.querySelector('#notification-count');
+  const companyId = selectedCompany?.id;
+  if (!button || !badge || !companyId) return;
+  try {
+    const notifications = await getNotifications();
+    if (selectedCompany?.id !== companyId || !button.isConnected) return;
+    const seen = readSeenNotifications(companyId);
+    const unreadCount = notifications.filter((item) => !seen.has(notificationKey(item))).length;
+    badge.hidden = unreadCount === 0;
+    badge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+    button.setAttribute(
+      'aria-label',
+      unreadCount ? `Notificações, ${unreadCount} não visualizada${unreadCount === 1 ? '' : 's'}` : 'Notificações',
+    );
+    button.title = unreadCount ? `${unreadCount} notificação(ões) não visualizada(s)` : 'Notificações';
+    notificationBellErrorCompany = null;
+  } catch (error) {
+    if (selectedCompany?.id !== companyId || !button.isConnected) return;
+    badge.hidden = true;
+    button.setAttribute('aria-label', 'Notificações (não foi possível atualizar)');
+    button.title = 'Não foi possível atualizar as notificações';
+    if (notificationBellErrorCompany !== companyId) {
+      showToast(`Não foi possível atualizar as notificações: ${error.message}`, 'error');
+      notificationBellErrorCompany = companyId;
+    }
+  }
 }
 
 nav.innerHTML = pages.map((page) => `
@@ -252,7 +341,7 @@ async function loadDashboard() {
   try {
     const [appointments, notifications] = await Promise.all([
       apiFetch(`/agendamentos?data=${localDateKey(now)}`),
-      apiFetch('/notificacoes'),
+      getNotifications(),
     ]);
 
     if (selectedCompany?.id !== companyId ||
@@ -374,6 +463,7 @@ function pageContent(page) {
   if (page.id === 'servicos') return servicesContent();
   if (page.id === 'agendamentos') return appointmentsContent();
   if (page.id === 'pagamentos') return paymentsContent();
+  if (page.id === 'notificacoes') return notificationsContent();
 
   const actionLabels = {
     agendamentos: 'Novo agendamento',
@@ -1197,6 +1287,209 @@ async function showPaymentDetails(paymentId) {
     `;
   } catch (error) {
     content.innerHTML = `<p class="form-error">Não foi possível consultar os detalhes: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+const notificationLabels = {
+  PROXIMO_AGENDAMENTO: 'Próximo agendamento',
+  AGENDAMENTO_CANCELADO: 'Agendamento cancelado',
+  ALTERACAO_HORARIO: 'Alteração de horário',
+  PENDENTE_FINALIZACAO: 'Pendente de finalização',
+};
+let notificationVisibleItems = [];
+
+function notificationsContent() {
+  return `
+    <div class="page-header">
+      <div><h2>Notificações</h2><p>Acompanhe os avisos reais da empresa selecionada; a leitura fica salva neste navegador</p></div>
+      <button class="action-button" type="button" id="refresh-notifications">Atualizar</button>
+    </div>
+    <div class="management-toolbar">
+      <label class="search-field notification-filter">Tipo de notificação
+        <select id="notification-type-filter">
+          <option value="">Todas</option>
+          <option value="PROXIMO_AGENDAMENTO">Próximos agendamentos</option>
+          <option value="AGENDAMENTO_CANCELADO">Agendamentos cancelados</option>
+          <option value="ALTERACAO_HORARIO">Alterações de horários</option>
+          <option value="PENDENTE_FINALIZACAO">Pendentes de finalização</option>
+        </select>
+      </label>
+    </div>
+    <div class="management-error" id="notifications-error" role="alert" hidden></div>
+    <section class="notification-list" id="notification-list" aria-live="polite">
+      <div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Buscando notificações...</span></div>
+    </section>
+    <dialog class="entity-dialog notification-dialog" id="notification-details-dialog" aria-labelledby="notification-details-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Detalhes relacionados</span><h2 id="notification-details-title">Notificação</h2></div>
+        <button class="dialog-close" type="button" data-close-notification aria-label="Fechar">&times;</button>
+      </div>
+      <div class="entity-dialog-content notification-details" id="notification-details-content"></div>
+    </dialog>
+  `;
+}
+
+function notificationDateValue(notification) {
+  const data = notification.dados || {};
+  if (notification.tipo === 'ALTERACAO_HORARIO') return data.criadoEm;
+  if (notification.tipo === 'PENDENTE_FINALIZACAO') return data.fim || data.inicio;
+  return data.inicio;
+}
+
+function notificationDateText(notification) {
+  const value = notificationDateValue(notification);
+  if (!value) return 'Data indisponível';
+  if (notification.tipo === 'ALTERACAO_HORARIO') return `Alteração registrada em ${formatDateTime(value)}`;
+  const label = notification.tipo === 'PENDENTE_FINALIZACAO' ? 'Atendimento encerrou' : 'Horário relacionado';
+  return `${label}: ${agendaWallDate(value)} às ${agendaWallTime(value)}`;
+}
+
+function notificationDescription(notification) {
+  const data = notification.dados || {};
+  if (notification.tipo === 'ALTERACAO_HORARIO') {
+    const horario = data.horario;
+    const profissional = horario?.profissional?.nome;
+    const dia = typeof horario?.diaSemana === 'number' ? weekDays[horario.diaSemana] : '';
+    const jornada = horario ? `${horario.inicio}–${horario.fim}` : '';
+    return [profissional, dia, jornada, data.mensagem].filter(Boolean).join(' · ');
+  }
+  return [
+    data.cliente?.nome || 'Cliente não informado',
+    data.profissional?.nome || 'Profissional não informado',
+  ].join(' · ');
+}
+
+function initNotificationsPage() {
+  const dialog = document.querySelector('#notification-details-dialog');
+  document.querySelector('#refresh-notifications').addEventListener('click', () => loadNotificationCenter(true));
+  document.querySelector('#notification-type-filter').addEventListener('change', renderNotificationItems);
+  document.querySelector('[data-close-notification]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  document.querySelector('#notification-list').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-notification-index]');
+    if (!button) return;
+    const notification = notificationVisibleItems[Number(button.dataset.notificationIndex)];
+    if (notification) showNotificationDetails(notification, selectedCompany?.id);
+  });
+  loadNotificationCenter();
+}
+
+async function loadNotificationCenter(forceRefresh = false) {
+  const list = document.querySelector('#notification-list');
+  const errorBox = document.querySelector('#notifications-error');
+  const companyId = selectedCompany?.id;
+  if (!list || !companyId) return;
+  errorBox.hidden = true;
+  list.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Buscando notificações...</span></div>';
+  try {
+    const notifications = await getNotifications(forceRefresh);
+    if (selectedCompany?.id !== companyId || !list.isConnected) return;
+    notificationCenterItems = notifications;
+    renderNotificationItems();
+  } catch (error) {
+    if (selectedCompany?.id !== companyId || !list.isConnected) return;
+    list.innerHTML = '';
+    errorBox.innerHTML = `<span>Não foi possível carregar as notificações: ${escapeHtml(error.message)}</span><button class="secondary-button" type="button" id="retry-notifications">Tentar novamente</button>`;
+    errorBox.hidden = false;
+    document.querySelector('#retry-notifications').addEventListener('click', () => loadNotificationCenter(true));
+  }
+}
+
+function renderNotificationItems() {
+  const list = document.querySelector('#notification-list');
+  const filter = document.querySelector('#notification-type-filter');
+  const companyId = selectedCompany?.id;
+  if (!list || !filter || !companyId) return;
+  if (!notificationCenterItems.length) {
+    notificationVisibleItems = [];
+    list.innerHTML = '<div class="notification-empty"><strong>Nenhuma notificação</strong><span>Não há avisos para esta empresa no momento.</span></div>';
+    updateNotificationBell();
+    return;
+  }
+
+  const selectedType = filter.value;
+  const visible = notificationCenterItems
+    .filter((item) => !selectedType || item.tipo === selectedType)
+    .sort((a, b) => new Date(notificationDateValue(b) || 0) - new Date(notificationDateValue(a) || 0));
+  notificationVisibleItems = visible;
+  if (!visible.length) {
+    list.innerHTML = '<div class="notification-empty"><strong>Nenhum resultado</strong><span>Não há notificações desse tipo.</span></div>';
+    return;
+  }
+
+  const seen = readSeenNotifications(companyId);
+  list.innerHTML = visible.map((notification, index) => {
+    const isNew = !seen.has(notificationKey(notification));
+    const category = notificationLabels[notification.tipo] || notification.tipo || 'Notificação';
+    const shortType = category.slice(0, 1);
+    return `
+      <article class="notification-card ${isNew ? 'notification-new' : ''}">
+        <span class="notification-symbol" aria-hidden="true">${escapeHtml(shortType)}</span>
+        <div class="notification-card-content">
+          <div class="notification-card-heading">
+            <strong>${escapeHtml(category)}</strong>
+            <span class="notification-read-state">${isNew ? 'Nova' : 'Visualizada'}</span>
+          </div>
+          <span class="notification-description">${escapeHtml(notificationDescription(notification))}</span>
+          <small>${escapeHtml(notificationDateText(notification))}</small>
+        </div>
+        <button class="table-action" type="button" data-notification-index="${index}">Ver detalhes</button>
+      </article>
+    `;
+  }).join('');
+  updateNotificationBell();
+}
+
+async function showNotificationDetails(notification, companyId) {
+  const dialog = document.querySelector('#notification-details-dialog');
+  const title = document.querySelector('#notification-details-title');
+  const content = document.querySelector('#notification-details-content');
+  const seen = readSeenNotifications(companyId);
+  seen.add(notificationKey(notification));
+  if (!saveSeenNotifications(companyId, seen)) {
+    showToast('Não foi possível salvar o estado de leitura neste navegador.', 'error');
+  }
+  renderNotificationItems();
+  updateNotificationBell();
+  title.textContent = notificationLabels[notification.tipo] || 'Notificação';
+  content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando detalhes relacionados...</span></div>';
+  dialog.showModal();
+  try {
+    if (notification.tipo === 'ALTERACAO_HORARIO') {
+      const data = notification.dados || {};
+      const horario = data.horario;
+      const intervalos = (horario?.intervalos || []).map((item) => `${item.inicio}–${item.fim}`).join(', ');
+      content.innerHTML = `
+        <dl>
+          <div><dt>Profissional</dt><dd>${escapeHtml(horario?.profissional?.nome || 'Não informado')}</dd></div>
+          <div><dt>Dia da semana</dt><dd>${escapeHtml(typeof horario?.diaSemana === 'number' ? weekDays[horario.diaSemana] : 'Não informado')}</dd></div>
+          <div><dt>Jornada atual</dt><dd>${horario ? `${escapeHtml(horario.inicio)}–${escapeHtml(horario.fim)}` : 'Horário relacionado indisponível'}</dd></div>
+          <div><dt>Intervalos</dt><dd>${escapeHtml(intervalos || 'Nenhum informado')}</dd></div>
+          <div><dt>Alteração registrada</dt><dd>${escapeHtml(formatDateTime(data.criadoEm))}</dd></div>
+          <div><dt>Mensagem</dt><dd>${escapeHtml(data.mensagem || 'Jornada do profissional alterada')}</dd></div>
+        </dl>
+      `;
+      return;
+    }
+
+    const appointment = await apiFetch(`/agendamentos/${notification.referenciaId}`);
+    if (selectedCompany?.id !== companyId || !dialog.open) return;
+    const services = appointmentServiceNames(appointment);
+    content.innerHTML = `
+      <dl>
+        <div><dt>Data e horário</dt><dd>${escapeHtml(`${agendaWallDate(appointment.inicio)} às ${agendaWallTime(appointment.inicio)}`)}</dd></div>
+        <div><dt>Cliente</dt><dd>${escapeHtml(appointment.cliente?.nome || 'Não informado')}</dd></div>
+        <div><dt>Telefone</dt><dd>${escapeHtml(appointment.cliente?.telefone || 'Não informado')}</dd></div>
+        <div><dt>Profissional</dt><dd>${escapeHtml(appointment.profissional?.nome || 'Não informado')}</dd></div>
+        <div><dt>Serviços</dt><dd>${escapeHtml(services || 'Não informado')}</dd></div>
+        <div><dt>Situação atual</dt><dd>${escapeHtml(appointmentStatusLabels[appointment.status] || appointment.status)}</dd></div>
+        <div><dt>Tipo do aviso</dt><dd>${escapeHtml(notificationLabels[notification.tipo] || notification.tipo)}</dd></div>
+      </dl>
+    `;
+  } catch (error) {
+    content.innerHTML = `<p class="form-error">Não foi possível carregar os detalhes: ${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -2184,6 +2477,7 @@ async function renderRoute() {
     return;
   }
 
+  updateNotificationBell();
   document.body.classList.remove('company-selection-mode');
   const page = pages.find((item) => item.id === route) || pages[0];
 
@@ -2206,6 +2500,7 @@ async function renderRoute() {
   if (page.id === 'servicos') initServicesPage();
   if (page.id === 'agendamentos') initAppointmentsPage();
   if (page.id === 'pagamentos') initPaymentsPage();
+  if (page.id === 'notificacoes') initNotificationsPage();
   closeMenu();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'smooth' });

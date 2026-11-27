@@ -54,6 +54,21 @@ export class NotificacoesService {
         orderBy: { criadoEm: 'desc' },
       }),
     ]);
+    const horariosAlterados = alteracoesHorario.length
+      ? await this.prisma.horarioProfissional.findMany({
+          where: {
+            empresaId,
+            id: { in: alteracoesHorario.map((notificacao) => notificacao.entidadeId) },
+          },
+          include: {
+            profissional: { select: { id: true, nome: true } },
+            intervalos: true,
+          },
+        })
+      : [];
+    const horariosPorId = new Map(
+      horariosAlterados.map((horario) => [horario.id, horario]),
+    );
 
     const unicas = new Map<string, { tipo: string; referenciaId: number; dados: unknown }>();
     for (const agendamento of proximos) {
@@ -81,7 +96,10 @@ export class NotificacoesService {
       unicas.set(`HORARIO:${notificacao.entidadeId}`, {
         tipo: notificacao.tipo,
         referenciaId: notificacao.entidadeId,
-        dados: notificacao,
+        dados: {
+          ...notificacao,
+          horario: horariosPorId.get(notificacao.entidadeId) ?? null,
+        },
       });
     }
     return [...unicas.values()];

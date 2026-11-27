@@ -162,6 +162,7 @@ button { cursor: pointer; }
 .topbar h1 { margin: 0; font-family: Georgia, serif; font-size: 21px; }
 .topbar-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .icon-button, .menu-toggle {
+  position: relative;
   width: 42px;
   height: 42px;
   display: grid;
@@ -172,6 +173,24 @@ button { cursor: pointer; }
   color: var(--muted);
 }
 .icon-button svg { width: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.notification-badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid var(--bg);
+  border-radius: 999px;
+  background: #b94a4a;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+.notification-badge[hidden] { display: none; }
 .user-avatar { width: 42px; height: 42px; }
 .menu-toggle { display: none; }
 
@@ -666,6 +685,78 @@ button { cursor: pointer; }
 .payment-details dt { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
 .payment-details dd { margin: 0; font-size: 13px; }
 
+.notification-filter { max-width: 330px; }
+.notification-filter select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  background: #101113;
+  color: var(--text);
+  font-size: 13px;
+}
+.notification-list { display: flex; flex-direction: column; gap: 10px; }
+.notification-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 16px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+}
+.notification-card.notification-new { border-color: #5a4b29; }
+.notification-symbol {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid #554924;
+  border-radius: 10px;
+  background: rgba(201, 164, 75, .08);
+  color: var(--gold-light);
+  font-family: Georgia, serif;
+  font-weight: 700;
+}
+.notification-card-content { min-width: 0; flex: 1; }
+.notification-card-heading { display: flex; align-items: center; gap: 9px; }
+.notification-card-heading > strong { font-size: 13px; }
+.notification-read-state {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.notification-new .notification-read-state { border-color: #554924; color: var(--gold-light); }
+.notification-description { display: block; margin-top: 5px; color: #c9c9cc; font-size: 12px; line-height: 1.45; }
+.notification-card-content > small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+.notification-empty {
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.notification-empty strong { color: var(--text); font-size: 14px; }
+.notification-empty span { font-size: 12px; }
+.notification-dialog { width: min(600px, calc(100vw - 32px)); }
+.notification-details dl { margin: 0; }
+.notification-details dl div { padding: 11px 0; border-bottom: 1px solid var(--border); }
+.notification-details dl div:last-child { border-bottom: 0; }
+.notification-details dt { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
+.notification-details dd { margin: 0; font-size: 13px; line-height: 1.5; }
+
 .service-price-note {
   margin: -8px 0 16px;
   padding: 11px 14px;
@@ -925,6 +1016,9 @@ button { cursor: pointer; }
   .appointment-filters .toolbar-actions { grid-column: 1 / -1; }
   .payment-filters { grid-template-columns: 1fr 1fr; }
   .payment-filters .toolbar-actions { grid-column: 1 / -1; }
+  .notification-card { align-items: flex-start; flex-wrap: wrap; }
+  .notification-card-content { min-width: calc(100% - 55px); }
+  .notification-card > .table-action { margin-left: 52px; }
   .quick-client-form { grid-template-columns: 1fr; }
   .toast-region { right: 12px; bottom: 12px; }
   .company-selection-page { justify-content: flex-start; padding: 32px 16px; }
