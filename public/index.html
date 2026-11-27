@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0b0b" />
+    <title>BarberCut</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">BC</div>
+          <div>
+            <strong>BarberCut</strong>
+            <span>Painel administrativo</span>
+          </div>
+        </div>
+
+        <nav class="sidebar-nav" id="sidebar-nav" aria-label="Menu principal"></nav>
+
+        <button class="company-switcher" type="button" id="company-switcher">
+          <span class="company-avatar" aria-hidden="true">BI</span>
+          <span class="company-info">
+            <strong>Barbearia Imperio</strong>
+            <small>Alterar empresa</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+      </aside>
+
+      <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+      <main class="main-content">
+        <header class="topbar">
+          <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Abrir menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+          <div>
+            <span class="topbar-label">Empresa selecionada</span>
+            <h1 id="company-name">Barbearia Imperio</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" type="button" id="notification-button" aria-label="Notificações">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M18 16v-5a6 6 0 0 0-12 0v5l-2 2h16l-2-2Zm-8 4h4" />
+              </svg>
+            </button>
+            <div class="user-avatar" aria-label="Usuário administrador">A</div>
+          </div>
+        </header>
+
+        <section class="content" id="content" tabindex="-1"></section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
