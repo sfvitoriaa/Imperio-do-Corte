@@ -370,9 +370,9 @@ function pageContent(page) {
   if (page.id === 'dashboard') return dashboardContent();
   if (page.id === 'clientes') return clientsContent();
   if (page.id === 'profissionais') return professionalsContent();
+  if (page.id === 'servicos') return servicesContent();
 
   const actionLabels = {
-    servicos: 'Novo serviço',
     agendamentos: 'Novo agendamento',
   };
   const action = actionLabels[page.id]
@@ -996,6 +996,254 @@ async function loadProfessionalAgenda(professionalId, date) {
   }
 }
 
+function servicesContent() {
+  return `
+    <div class="page-header">
+      <div><h2>Serviços</h2><p>Gerencie valores, duração e disponibilidade do catálogo</p></div>
+      <button class="action-button" type="button" id="new-service">+ Novo serviço</button>
+    </div>
+    <p class="service-price-note">Alterações no preço do serviço são aplicadas a novos agendamentos; os valores já registrados permanecem preservados.</p>
+    <div class="management-error" id="services-error" role="alert" hidden></div>
+    <div class="table-card">
+      <div class="table-scroll">
+        <table class="data-table services-table">
+          <thead><tr><th>Nome</th><th>Descrição</th><th>Preço</th><th>Duração</th><th>Situação</th><th class="actions-column">Ações</th></tr></thead>
+          <tbody id="services-table-body">
+            <tr><td colspan="6"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando serviços...</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <dialog class="entity-dialog" id="service-dialog" aria-labelledby="service-dialog-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Catálogo</span><h2 id="service-dialog-title"></h2></div>
+        <button class="dialog-close" type="button" data-close-service aria-label="Fechar">&times;</button>
+      </div>
+      <div class="entity-dialog-content" id="service-dialog-content"></div>
+    </dialog>
+  `;
+}
+
+function formatCurrency(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount)
+    ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(amount)
+    : 'Valor indisponível';
+}
+
+function initServicesPage() {
+  const body = document.querySelector('#services-table-body');
+  if (!body) return;
+  const dialog = document.querySelector('#service-dialog');
+  document.querySelector('#new-service').addEventListener('click', () => openServiceForm());
+  document.querySelector('[data-close-service]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  body.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-service-action]');
+    if (!button) return;
+    const { serviceAction, serviceId } = button.dataset;
+    if (serviceAction === 'view') showServiceDetails(serviceId);
+    if (serviceAction === 'edit') openServiceForm({ id: Number(serviceId) });
+    if (serviceAction === 'toggle') toggleService(serviceId, button.dataset.active === 'true');
+  });
+  loadServices();
+}
+
+async function loadServices() {
+  const body = document.querySelector('#services-table-body');
+  const error = document.querySelector('#services-error');
+  if (!body || !selectedCompany?.id) return;
+  const companyId = selectedCompany.id;
+  error.hidden = true;
+  body.innerHTML = '<tr><td colspan="6"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando serviços...</span></div></td></tr>';
+
+  try {
+    const services = await apiFetch('/servicos');
+    if (!Array.isArray(services)) throw new Error('A API retornou uma lista de serviços inválida.');
+    if (selectedCompany?.id !== companyId || !body.isConnected) return;
+
+    body.innerHTML = services.length
+      ? services.map((service) => `
+        <tr>
+          <td><strong class="table-primary">${escapeHtml(service.nome)}</strong></td>
+          <td class="service-description">${escapeHtml(service.descricao || 'Sem descrição')}</td>
+          <td class="service-price">${escapeHtml(formatCurrency(service.preco))}</td>
+          <td>${escapeHtml(String(service.duracaoMin))} min</td>
+          <td><span class="status-badge status-${service.ativo ? 'ativo' : 'inativo'}">${service.ativo ? 'Ativo' : 'Inativo'}</span></td>
+          <td class="table-actions">
+            <button class="table-action" type="button" data-service-action="view" data-service-id="${service.id}">Consultar</button>
+            <button class="table-action" type="button" data-service-action="edit" data-service-id="${service.id}">Editar</button>
+            <button class="table-action" type="button" data-service-action="toggle" data-service-id="${service.id}" data-active="${service.ativo}">${service.ativo ? 'Desativar' : 'Ativar'}</button>
+          </td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="6"><div class="table-state"><strong>Nenhum serviço cadastrado</strong><span>Cadastre um serviço para preencher o catálogo.</span></div></td></tr>';
+  } catch (requestError) {
+    if (selectedCompany?.id !== companyId || !body.isConnected) return;
+    body.innerHTML = '<tr><td colspan="6"><div class="table-state">A lista não está disponível.</div></td></tr>';
+    error.innerHTML = `<span>Não foi possível carregar os serviços: ${escapeHtml(requestError.message)}</span><button class="secondary-button" type="button" id="retry-services">Tentar novamente</button>`;
+    error.hidden = false;
+    document.querySelector('#retry-services').addEventListener('click', loadServices);
+  }
+}
+
+async function openServiceForm(service = null) {
+  const dialog = document.querySelector('#service-dialog');
+  const title = document.querySelector('#service-dialog-title');
+  const content = document.querySelector('#service-dialog-content');
+  let current = service;
+
+  if (service?.id) {
+    title.textContent = 'Editar serviço';
+    content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando dados...</span></div>';
+    if (!dialog.open) dialog.showModal();
+    try {
+      current = await apiFetch(`/servicos/${service.id}`);
+    } catch (error) {
+      content.innerHTML = `<p class="form-error">Não foi possível carregar o serviço: ${escapeHtml(error.message)}</p>`;
+      return;
+    }
+  } else {
+    title.textContent = 'Novo serviço';
+    current = null;
+  }
+
+  content.innerHTML = `
+    <form class="entity-form" id="service-form" novalidate>
+      <label>Nome do serviço
+        <input name="nome" required maxlength="191" value="${escapeHtml(current?.nome || '')}" />
+        <small class="field-error" data-error="nome"></small>
+      </label>
+      <label>Descrição
+        <textarea name="descricao" maxlength="191">${escapeHtml(current?.descricao || '')}</textarea>
+        <small class="field-error" data-error="descricao"></small>
+      </label>
+      <div class="form-grid">
+        <label>Preço (R$)
+          <input name="preco" type="number" min="0.01" step="0.01" required inputmode="decimal" value="${current ? escapeHtml(String(current.preco)) : ''}" />
+          <small class="field-error" data-error="preco"></small>
+        </label>
+        <label>Duração (minutos)
+          <input name="duracaoMin" type="number" min="5" step="1" required inputmode="numeric" value="${current ? escapeHtml(String(current.duracaoMin)) : ''}" />
+          <small class="field-error" data-error="duracaoMin"></small>
+        </label>
+      </div>
+      <small class="field-hint">O novo preço não altera os valores registrados em agendamentos anteriores.</small>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-close-form>Cancelar</button>
+        <button class="action-button" type="submit">${current ? 'Salvar alterações' : 'Cadastrar serviço'}</button>
+      </div>
+    </form>
+  `;
+  if (!dialog.open) dialog.showModal();
+
+  content.querySelector('[data-close-form]').addEventListener('click', () => dialog.close());
+  content.querySelector('#service-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const rawPrice = String(formData.get('preco') || '').trim().replace(',', '.');
+    const price = Number(rawPrice);
+    const duration = Number(formData.get('duracaoMin'));
+    const payload = {
+      nome: String(formData.get('nome') || '').trim(),
+      descricao: String(formData.get('descricao') || '').trim(),
+      preco: price,
+      duracaoMin: duration,
+    };
+    const errors = {
+      nome: !payload.nome ? 'Informe o nome do serviço.' : '',
+      descricao: payload.descricao.length > 191 ? 'A descrição deve ter no máximo 191 caracteres.' : '',
+      preco: !/^\d+(?:\.\d{1,2})?$/.test(rawPrice) || !Number.isFinite(price) || price <= 0
+        ? 'Informe um preço maior que zero, com até duas casas decimais.'
+        : '',
+      duracaoMin: !Number.isInteger(duration) || duration < 5
+        ? 'A duração deve ser um número inteiro de pelo menos 5 minutos.'
+        : '',
+    };
+    Object.entries(errors).forEach(([field, message]) => {
+      form.querySelector(`[data-error="${field}"]`).textContent = message;
+    });
+    if (Object.values(errors).some(Boolean)) return;
+
+    const confirmed = await confirmAction(
+      current ? 'Confirmar alteração' : 'Confirmar cadastro',
+      current
+        ? `Salvar as alterações do serviço ${payload.nome}? Agendamentos antigos mantêm seus valores registrados.`
+        : `Cadastrar o serviço ${payload.nome} nesta empresa?`,
+    );
+    if (!confirmed) return;
+
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await apiFetch(current ? `/servicos/${current.id}` : '/servicos', {
+        method: current ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      dialog.close();
+      showToast(current ? 'Serviço atualizado com sucesso.' : 'Serviço cadastrado com sucesso.');
+      await loadServices();
+    } catch (error) {
+      showToast(`Não foi possível salvar o serviço: ${error.message}`, 'error');
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
+}
+
+async function toggleService(serviceId, active) {
+  const confirmed = await confirmAction(
+    active ? 'Desativar serviço' : 'Ativar serviço',
+    `Confirma ${active ? 'desativar' : 'ativar'} este serviço? Os agendamentos anteriores serão preservados.`,
+  );
+  if (!confirmed) return;
+
+  try {
+    await apiFetch(`/servicos/${serviceId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ativo: !active }),
+    });
+    showToast(`Serviço ${active ? 'desativado' : 'ativado'} com sucesso.`);
+    await loadServices();
+  } catch (error) {
+    showToast(`Não foi possível atualizar a situação: ${error.message}`, 'error');
+  }
+}
+
+async function showServiceDetails(serviceId) {
+  const dialog = document.querySelector('#service-dialog');
+  const title = document.querySelector('#service-dialog-title');
+  const content = document.querySelector('#service-dialog-content');
+  content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando informações...</span></div>';
+  dialog.showModal();
+
+  try {
+    const service = await apiFetch(`/servicos/${serviceId}`);
+    title.textContent = service.nome;
+    content.innerHTML = `
+      <div class="entity-details">
+        <dl>
+          <div><dt>Nome</dt><dd>${escapeHtml(service.nome)}</dd></div>
+          <div><dt>Descrição</dt><dd>${escapeHtml(service.descricao || 'Sem descrição')}</dd></div>
+          <div><dt>Preço atual</dt><dd>${escapeHtml(formatCurrency(service.preco))}</dd></div>
+          <div><dt>Duração</dt><dd>${escapeHtml(String(service.duracaoMin))} minutos</dd></div>
+          <div><dt>Situação</dt><dd>${service.ativo ? 'Ativo' : 'Inativo'}</dd></div>
+        </dl>
+        <p class="field-hint">O preço atual do catálogo não modifica os valores guardados em agendamentos anteriores.</p>
+        <div class="dialog-actions"><button class="action-button" type="button" id="edit-service-detail">Editar serviço</button></div>
+      </div>
+    `;
+    content.querySelector('#edit-service-detail').addEventListener('click', () => openServiceForm(service));
+  } catch (error) {
+    content.innerHTML = `<p class="form-error">Não foi possível consultar o serviço: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
 async function companySelectionContent() {
   const container = document.querySelector('#content');
   container.innerHTML = `
@@ -1151,6 +1399,7 @@ async function renderRoute() {
   }
   if (page.id === 'clientes') initClientsPage();
   if (page.id === 'profissionais') initProfessionalsPage();
+  if (page.id === 'servicos') initServicesPage();
   closeMenu();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'smooth' });
