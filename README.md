@@ -34,6 +34,20 @@ Appointment, work-schedule, time-off, payment, and report dates use the
 `America/Sao_Paulo` business time zone. The API stores timestamps as UTC instants
 and interprets date-only filters as São Paulo calendar days.
 
+### Demo data
+
+After configuring `DATABASE_URL` and generating the Prisma client, load or
+refresh the example companies, clients, professionals, services, work schedules,
+appointments, and payments with:
+
+```bash
+pnpm run db:seed
+```
+
+The seed uses dedicated BarberCut demo companies and is safe to run repeatedly:
+it updates matching records rather than adding duplicates. Appointments are
+placed on recent and upcoming business days in the `America/Sao_Paulo` time zone.
+
 ## Project setup
 
 ```bash
