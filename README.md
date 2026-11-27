@@ -1,137 +1,205 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# BarberCut
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Sistema web para apoiar a operação de barbearias: cadastro de empresas,
+clientes, profissionais e serviços, organização de horários e agendamentos,
+registro de pagamentos e consulta de indicadores.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Objetivo
 
-## Description
+Centralizar a rotina de atendimento da barbearia em uma interface para o
+atendente, com os dados separados por empresa e persistidos no banco de dados.
 
-BarberCut is a NestJS application with a browser interface served by the same API.
+## Tecnologias
 
-### Database and business time
+- **Back-end:** Node.js, TypeScript e NestJS.
+- **Persistência:** Prisma ORM 7 e MySQL, usando o adaptador
+  `@prisma/adapter-mariadb`.
+- **Front-end:** HTML, CSS e JavaScript; os arquivos estáticos são servidos pelo
+  próprio NestJS.
+- **Validação:** `class-validator`, `class-transformer` e `ValidationPipe` do
+  NestJS.
+- **Testes:** Vitest.
+- **Gerenciador de pacotes:** pnpm (o projeto contém `pnpm-lock.yaml`).
 
-Set `DATABASE_URL` before starting the application, then generate the Prisma client
-from the current schema with `pnpm exec prisma generate`.
+## Funcionalidades
 
-Appointment, work-schedule, time-off, payment, and report dates use the
-`America/Sao_Paulo` business time zone. The API stores timestamps as UTC instants
-and interprets date-only filters as São Paulo calendar days.
+- Dashboard com indicadores calculados a partir dos dados da empresa.
+- Cadastro e manutenção de empresas, clientes, profissionais e serviços.
+- Agendamentos com consulta de disponibilidade, edição, cancelamento e consulta
+  de situação e histórico.
+- Configuração da jornada semanal, intervalos, folgas e indisponibilidades dos
+  profissionais.
+- Registro e consulta de pagamentos relacionados a agendamentos.
+- Central de notificações sobre próximos agendamentos, cancelamentos,
+  alterações de jornada e atendimentos pendentes de finalização.
+- Relatórios por período, incluindo atendimentos, serviços e profissionais com
+  mais atendimentos, pagamentos registrados e cancelamentos.
+- Interface com tema escuro e detalhes dourados.
 
-### Demo data
+## Estrutura do projeto
 
-After configuring `DATABASE_URL` and generating the Prisma client, load or
-refresh the example companies, clients, professionals, services, work schedules,
-appointments, and payments with:
+```text
+.
+├── public/                 # Interface estática: HTML, CSS e JavaScript
+├── prisma/
+│   ├── migrations/          # Migrações do banco
+│   ├── schema.prisma        # Modelos e relacionamentos
+│   └── seed.mjs             # Dados de demonstração idempotentes
+├── src/
+│   ├── agendamentos/        # Agenda, disponibilidade e histórico
+│   ├── clientes/
+│   ├── common/              # Escopo da empresa e regras compartilhadas
+│   ├── empresas/
+│   ├── pagamentos/
+│   ├── profissionais/      # Equipe, jornada e indisponibilidades
+│   ├── prisma/              # Configuração do Prisma Client
+│   ├── relatorios/          # Relatórios e notificações
+│   ├── servicos/
+│   ├── app.module.ts
+│   └── main.ts
+└── test/                    # Testes end-to-end
+```
+
+Testes unitários ficam junto aos módulos, em arquivos `*.spec.ts`.
+
+## Instalação
+
+Pré-requisitos: Node.js, pnpm e acesso a um banco MySQL/MariaDB.
+
+```bash
+pnpm install
+```
+
+## Banco de dados
+
+Crie um banco vazio no servidor MySQL/MariaDB e configure `DATABASE_URL` na raiz
+do projeto, em um arquivo `.env`:
+
+```dotenv
+DATABASE_URL="mysql://USUARIO:SENHA@HOST:3306/NOME_DO_BANCO"
+PORT=3000
+```
+
+`PORT` é opcional; o back-end usa `3000` quando a variável não está definida.
+O arquivo `.env` não deve ser versionado.
+
+Gere o cliente Prisma e aplique as migrações existentes:
+
+```bash
+pnpm exec prisma generate
+pnpm exec prisma migrate deploy
+```
+
+`migrate deploy` aplica as migrações existentes ao banco configurado; ele não
+cria o servidor nem as credenciais do banco.
+
+## Executar o sistema
+
+O front-end não tem servidor separado: o NestJS serve `public/index.html`,
+`public/app.js` e `public/styles.css`. Inicie o back-end em modo de
+desenvolvimento:
+
+```bash
+pnpm run start:dev
+```
+
+Abra `http://localhost:3000` (ou a porta configurada em `PORT`). Para compilar e
+executar a versão de produção, os scripts disponíveis são:
+
+```bash
+pnpm run build
+pnpm run start:prod
+```
+
+## Testes
+
+```bash
+pnpm run test
+pnpm run test:e2e
+pnpm run test:cov
+```
+
+## Dados de demonstração
+
+Depois de configurar o banco, aplicar as migrações e gerar o Prisma Client:
 
 ```bash
 pnpm run db:seed
 ```
 
-The seed uses dedicated BarberCut demo companies and is safe to run repeatedly:
-it updates matching records rather than adding duplicates. Appointments are
-placed on recent and upcoming business days in the `America/Sao_Paulo` time zone.
+O seed cria ou atualiza duas empresas de demonstração, seus clientes,
+profissionais, serviços, jornadas, agendamentos e pagamentos. Ele pode ser
+executado novamente sem acrescentar cópias dos mesmos exemplos. Os agendamentos
+de demonstração usam dias recentes e futuros no fuso de São Paulo.
 
-## Project setup
+## Rotas principais da API
 
-```bash
-$ pnpm install
-```
+Os recursos abaixo são servidos na raiz, por exemplo, `/clientes` e
+`/agendamentos`; **não** existe um prefixo global `/api`. `GET /api` é uma rota
+simples do controller principal.
 
-## Compile and run the project
+As rotas de negócio que operam sobre uma empresa exigem o cabeçalho
+`x-empresa-id`. As rotas de empresas (`/empresas`) são usadas para consultar e
+manter empresas e não usam esse cabeçalho.
 
-```bash
-# development
-$ pnpm run start
+| Recurso | Rotas |
+| --- | --- |
+| Empresas | `GET, POST /empresas`; `GET, PATCH /empresas/:id` |
+| Clientes | `GET, POST /clientes`; `GET, PATCH, DELETE /clientes/:id` |
+| Profissionais | `GET, POST /profissionais`; `GET, PATCH, DELETE /profissionais/:id`; `GET /profissionais/:id/jornada`; `PUT /profissionais/:id/horarios`; `POST /profissionais/:id/horarios/:horarioId/intervalos`; `POST /profissionais/:id/folgas`; `POST /profissionais/:id/indisponibilidades` |
+| Serviços | `GET, POST /servicos`; `GET, PATCH, DELETE /servicos/:id` |
+| Agendamentos | `GET, POST /agendamentos`; `GET /agendamentos/:id`; `PATCH /agendamentos/:id`; `PATCH /agendamentos/:id/editar`; `POST /agendamentos/:id/cancelar`; `DELETE /agendamentos/:id` |
+| Consultas de agenda | `GET /agendamentos/pendentes`; `GET /agendamentos/concluidos`; `GET /agendamentos/cancelamentos`; `GET /agendamentos/disponibilidade`; `GET /agendamentos/historico/cliente/:id`; `GET /agendamentos/historico/profissional/:id` |
+| Pagamentos | `GET /pagamentos`; `GET /pagamentos/pendentes`; `GET /pagamentos/realizados`; `GET /pagamentos/periodo`; `GET /pagamentos/:id`; `POST /pagamentos/agendamento/:agendamentoId` |
+| Notificações | `GET /notificacoes` |
+| Relatórios | `GET /relatorios` |
 
-# watch mode
-$ pnpm run start:dev
+Parâmetros de consulta usados pelas telas:
 
-# production mode
-$ pnpm run start:prod
-```
+- `GET /clientes`: `nome` e/ou `telefone`.
+- `GET /profissionais` e `GET /servicos`: `ativos`.
+- `GET /agendamentos`: `data`, `clienteId` e/ou `profissionalId`.
+- `GET /agendamentos/disponibilidade`: `profissionalId`, `data` e `servicoId`
+  ou `servicoIds`.
+- `GET /pagamentos/periodo` e `GET /relatorios`: `inicio` e `fim` no formato
+  `AAAA-MM-DD`.
 
-## Run tests
+## Regras de negócio
 
-```bash
-# unit tests
-$ pnpm run test
+- As consultas e operações da empresa selecionada são escopadas por
+  `x-empresa-id`; clientes, profissionais e serviços usados em um agendamento
+  devem pertencer à mesma empresa.
+- A disponibilidade considera jornada, intervalos, indisponibilidades,
+  duração dos serviços e agendamentos existentes. A criação e a edição também
+  verificam conflitos para impedir sobreposição de horários.
+- Datas de agenda, jornada e relatórios são interpretadas no fuso
+  `America/Sao_Paulo`. Os filtros de data representam dias do calendário nesse
+  fuso.
+- Agendamentos têm situações como `PENDENTE`, `AGENDADO`, `CONCLUIDO`,
+  `CANCELADO` e `FALTOU`. A rota `PATCH /agendamentos/:id` atualiza situação;
+  o cancelamento também tem rota própria. `DELETE /agendamentos/:id` encaminha
+  para o fluxo de cancelamento.
+- Cada agendamento tem no máximo um pagamento associado. O sistema registra
+  valor, forma e situação (`PENDENTE` ou `REALIZADO`); as formas são dinheiro,
+  Pix, débito e crédito.
+- Dashboard, relatórios e notificações usam dados da API. Períodos sem
+  registros não devem ser preenchidos com valores inventados. Dados de
+  demonstração são inseridos somente quando o seed é executado explicitamente.
+- A API não oferece controle de leitura de notificações: o estado de leitura da
+  interface fica salvo no navegador.
 
-# e2e tests
-$ pnpm run test:e2e
+## Decisões de produto
 
-# test coverage
-$ pnpm run test:cov
-```
+- O sistema deve agilizar o atendimento feito pelo atendente, com consulta da
+  disponibilidade antes da confirmação do horário.
+- O fuso de negócio adotado para todas as empresas é `America/Sao_Paulo`.
+- O tema visual é escuro, com detalhes dourados.
+- Indicadores e notificações devem representar registros reais; não se criam
+  avisos artificiais para preencher telas.
 
-## Deployment
+## Funcionalidades descartadas e justificativas
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+- **Transações bancárias:** não há cobrança, transferência, autorização de
+  cartão nem integração com bancos. O sistema somente registra pagamentos
+  associados a agendamentos.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
