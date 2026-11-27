@@ -9,6 +9,7 @@ import { ClientesModule } from './clientes/clientes.module.js';
 import { ProfissionaisModule } from './profissionais/profissionais.module.js';
 import { ServicosModule } from './servicos/servicos.module.js';
 import { AgendamentosModule } from './agendamentos/agendamentos.module.js';
+import { PagamentosModule } from './pagamentos/pagamentos.module.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -29,7 +30,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     ClientesModule,
     ProfissionaisModule,
     ServicosModule,
-    AgendamentosModule
+    AgendamentosModule,
+    PagamentosModule
   ],
   controllers: [AppController],
   providers: [AppService],

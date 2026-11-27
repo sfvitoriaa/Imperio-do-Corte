@@ -25,6 +25,7 @@ model Empresa {
   agendamentos  Agendamento[]
   horarios      HorarioProfissional[]
   indisponibilidades IndisponibilidadeProfissional[]
+  pagamentos Pagamento[]
 
   @@map("empresas")
 }
@@ -120,7 +121,7 @@ model Agendamento {
   id             Int                  @id @default(autoincrement())
   inicio         DateTime
   fim            DateTime
-  status         StatusAgendamento    @default(AGENDADO)
+  status         StatusAgendamento    @default(PENDENTE)
   criadoEm       DateTime             @default(now())
   empresa        Empresa?             @relation(fields: [empresaId], references: [id])
   empresaId      Int?
@@ -129,6 +130,7 @@ model Agendamento {
   profissional   Profissional?        @relation(fields: [profissionalId], references: [id])
   profissionalId Int?
   servicos       AgendamentoServico[]
+  pagamento      Pagamento?
 
   @@map("agendamentos")
 }
@@ -142,4 +144,31 @@ model AgendamentoServico {
 
   @@id([agendamentoId, servicoId])
   @@map("agendamento_servicos")
+}
+
+enum FormaPagamento {
+  DINHEIRO
+  PIX
+  CARTAO_DEBITO
+  CARTAO_CREDITO
+}
+
+enum StatusPagamento {
+  PENDENTE
+  REALIZADO
+}
+
+model Pagamento {
+  id             Int             @id @default(autoincrement())
+  valorPago      Float?
+  forma          FormaPagamento?
+  status         StatusPagamento @default(PENDENTE)
+  registradoEm   DateTime?
+  criadoEm       DateTime        @default(now())
+  empresa        Empresa?        @relation(fields: [empresaId], references: [id])
+  empresaId      Int?
+  agendamento    Agendamento     @relation(fields: [agendamentoId], references: [id])
+  agendamentoId  Int             @unique
+
+  @@map("pagamentos")
 }

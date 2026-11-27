@@ -307,6 +307,9 @@ export class AgendamentosService {
               servicoId: s.id,
               precoCobrado: s.preco
             }))
+          },
+          pagamento: {
+            create: { empresaId, status: 'PENDENTE' }
           }
         },
         include: DETALHES
