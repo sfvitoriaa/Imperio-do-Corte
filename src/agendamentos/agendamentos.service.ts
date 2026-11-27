@@ -354,7 +354,7 @@ export class AgendamentosService {
   ) {
     await this.empresas.validarEmpresaAtiva(empresaId);
     const atual = await this.findOne(empresaId, id);
-    if (atual.status !== 'AGENDADO') {
+    if (!['AGENDADO', 'PENDENTE'].includes(atual.status)) {
       throw new ConflictException('Somente agendamentos ativos podem ser editados');
     }
     if (!dto.clienteId && !dto.profissionalId && !dto.inicio && !dto.servicoIds) {
@@ -476,7 +476,7 @@ export class AgendamentosService {
   async cancelar(empresaId: number, id: number) {
     await this.empresas.validarEmpresaAtiva(empresaId);
     const agendamento = await this.findOne(empresaId, id);
-    if (agendamento.status !== 'AGENDADO') {
+    if (!['AGENDADO', 'PENDENTE'].includes(agendamento.status)) {
       throw new ConflictException('Somente agendamentos ativos podem ser cancelados');
     }
     return this.prisma.agendamento.update({
@@ -486,27 +486,94 @@ export class AgendamentosService {
     });
   }
 
+  async consultarPendentes(empresaId: number) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+    return this.prisma.agendamento.findMany({
+      where: {
+        empresaId,
+        status: { in: ['AGENDADO', 'PENDENTE'] },
+      },
+      include: DETALHES,
+      orderBy: { inicio: 'asc' },
+    });
+  }
+
+  async consultarConcluidos(empresaId: number) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+    return this.prisma.agendamento.findMany({
+      where: { empresaId, status: 'CONCLUIDO' },
+      include: DETALHES,
+      orderBy: { inicio: 'desc' },
+    });
+  }
+
+  async consultarCancelamentos(empresaId: number) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+    return this.prisma.agendamento.findMany({
+      where: {
+        empresaId,
+        status: { in: ['CANCELADO', 'FALTOU', 'NAO_COMPARECEU'] },
+      },
+      include: DETALHES,
+      orderBy: { inicio: 'desc' },
+    });
+  }
+
+  async consultarHistoricoCliente(empresaId: number, clienteId: number) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+    const cliente = await this.prisma.cliente.findFirst({
+      where: { id: clienteId, empresaId },
+    });
+    if (!cliente) {
+      throw new NotFoundException('Cliente não encontrado nesta empresa');
+    }
+    return this.prisma.agendamento.findMany({
+      where: { empresaId, clienteId },
+      include: DETALHES,
+      orderBy: { inicio: 'desc' },
+    });
+  }
+
+  async consultarHistoricoProfissional(empresaId: number, profissionalId: number) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+    const profissional = await this.prisma.profissional.findFirst({
+      where: { id: profissionalId, empresaId },
+    });
+    if (!profissional) {
+      throw new NotFoundException('Profissional não encontrado nesta empresa');
+    }
+    return this.prisma.agendamento.findMany({
+      where: { empresaId, profissionalId },
+      include: DETALHES,
+      orderBy: { inicio: 'desc' },
+    });
+  }
+
   async atualizarStatus(empresaId: number, id: number, dto: UpdateStatusDto) {
     await this.empresas.validarEmpresaAtiva(empresaId);
 
     const agendamento = await this.findOne(empresaId, id);
-    if (agendamento.status !== 'AGENDADO') {
+    if (!['AGENDADO', 'PENDENTE'].includes(agendamento.status)) {
       throw new ConflictException('O status do agendamento já foi finalizado');
     }
 
+    if (dto.status === 'PENDENTE' || dto.status === 'AGENDADO') {
+      throw new ConflictException('O agendamento já está pendente');
+    }
+
+    const statusInterno =
+      dto.status === 'NAO_COMPARECEU'
+        ? 'FALTOU'
+        : dto.status;
+
     return this.prisma.agendamento.update({
       where: { id, empresaId },
-      data: { status: dto.status },
+      data: { status: statusInterno },
       include: DETALHES,
     });
   }
 
   async remove(empresaId: number, id: number) {
-    await this.findOne(empresaId, id);
-
-    return this.prisma.$transaction(async (prisma) => {
-      await prisma.agendamentoServico.deleteMany({ where: { agendamentoId: id } });
-      return prisma.agendamento.delete({ where: { id, empresaId } });
-    });
+    return this.cancelar(empresaId, id);
   }
 }

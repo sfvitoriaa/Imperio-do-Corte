@@ -108,10 +108,12 @@ model Servico {
 }
 
 enum StatusAgendamento {
+  PENDENTE
   AGENDADO
   CONCLUIDO
   CANCELADO
   FALTOU
+  NAO_COMPARECEU
 }
 
 model Agendamento {

@@ -21,6 +21,37 @@ export class AgendamentosController {
     return this.agendamentosService.findAll(empresaId, query);
   }
 
+  @Get('pendentes')
+  pendentes(@EmpresaId() empresaId: number) {
+    return this.agendamentosService.consultarPendentes(empresaId);
+  }
+
+  @Get('concluidos')
+  concluidos(@EmpresaId() empresaId: number) {
+    return this.agendamentosService.consultarConcluidos(empresaId);
+  }
+
+  @Get('cancelamentos')
+  cancelamentos(@EmpresaId() empresaId: number) {
+    return this.agendamentosService.consultarCancelamentos(empresaId);
+  }
+
+  @Get('historico/cliente/:id')
+  historicoCliente(
+    @EmpresaId() empresaId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.agendamentosService.consultarHistoricoCliente(empresaId, id);
+  }
+
+  @Get('historico/profissional/:id')
+  historicoProfissional(
+    @EmpresaId() empresaId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.agendamentosService.consultarHistoricoProfissional(empresaId, id);
+  }
+
   @Get('disponibilidade')
   consultarDisponibilidade(
     @EmpresaId() empresaId: number,

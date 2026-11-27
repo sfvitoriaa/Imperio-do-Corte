@@ -434,4 +434,68 @@ describe('AgendamentosService', () => {
 
     expect(prisma.agendamento.update).not.toHaveBeenCalled();
   });
+
+  it('maps no-show to the internal historical status', async () => {
+    prisma.agendamento.findFirst.mockResolvedValue({
+      id: 12,
+      status: 'PENDENTE',
+    });
+    prisma.agendamento.update.mockResolvedValue({
+      id: 12,
+      status: 'FALTOU',
+    });
+
+    await service.atualizarStatus(3, 12, {
+      status: 'NAO_COMPARECEU',
+    });
+
+    expect(prisma.agendamento.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: 'FALTOU' },
+      }),
+    );
+  });
+
+  it('does not finalize an appointment twice', async () => {
+    prisma.agendamento.findFirst.mockResolvedValue({
+      id: 12,
+      status: 'CONCLUIDO',
+    });
+
+    await expect(
+      service.atualizarStatus(3, 12, { status: 'CANCELADO' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.agendamento.update).not.toHaveBeenCalled();
+  });
+
+  it('queries pending, completed, cancellations, and both histories by company', async () => {
+    prisma.agendamento.findMany.mockResolvedValue([]);
+    prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
+    prisma.profissional.findFirst.mockResolvedValue({ id: 7 });
+
+    await service.consultarPendentes(3);
+    await service.consultarConcluidos(3);
+    await service.consultarCancelamentos(3);
+    await service.consultarHistoricoCliente(3, 2);
+    await service.consultarHistoricoProfissional(3, 7);
+
+    expect(prisma.agendamento.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { empresaId: 3, status: { in: ['AGENDADO', 'PENDENTE'] } },
+      }),
+    );
+    expect(prisma.agendamento.findMany).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        where: { empresaId: 3, clienteId: 2 },
+      }),
+    );
+    expect(prisma.agendamento.findMany).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        where: { empresaId: 3, profissionalId: 7 },
+      }),
+    );
+  });
 });
