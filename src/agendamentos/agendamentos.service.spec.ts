@@ -21,6 +21,9 @@ describe('AgendamentosService', () => {
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    agendamentoServico: {
+      deleteMany: vi.fn(),
+    },
     horarioProfissional: {
       findFirst: vi.fn(),
     },
@@ -28,6 +31,7 @@ describe('AgendamentosService', () => {
       findFirst: vi.fn(),
       findMany: vi.fn(),
     },
+    $transaction: vi.fn(),
   };
   const empresas = {
     validarEmpresaAtiva: vi.fn().mockResolvedValue({}),
@@ -39,6 +43,9 @@ describe('AgendamentosService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    prisma.$transaction.mockImplementation(async (callback: (tx: typeof prisma) => unknown) =>
+      callback(prisma),
+    );
     prisma.horarioProfissional.findFirst.mockResolvedValue({
       inicio: '00:00',
       fim: '23:59',
@@ -337,5 +344,94 @@ describe('AgendamentosService', () => {
 
     expect(horarios).not.toContain('10:00');
     expect(horarios).not.toContain('10:30');
+  });
+
+  it('filters appointments by company, date, professional, and client', async () => {
+    prisma.agendamento.findMany.mockResolvedValue([]);
+
+    await service.findAll(3, {
+      data: '2027-01-10',
+      profissionalId: 7,
+      clienteId: 2,
+    });
+
+    expect(prisma.agendamento.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          empresaId: 3,
+          profissionalId: 7,
+          clienteId: 2,
+          inicio: {
+            gte: new Date('2027-01-10T00:00:00.000Z'),
+            lt: new Date('2027-01-11T00:00:00.000Z'),
+          },
+        },
+      }),
+    );
+  });
+
+  it('cancels only an active appointment', async () => {
+    prisma.agendamento.findFirst.mockResolvedValue({
+      id: 12,
+      status: 'AGENDADO',
+    });
+    prisma.agendamento.update.mockResolvedValue({
+      id: 12,
+      status: 'CANCELADO',
+    });
+
+    await expect(service.cancelar(3, 12)).resolves.toMatchObject({
+      status: 'CANCELADO',
+    });
+    expect(prisma.agendamento.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 12, empresaId: 3 },
+        data: { status: 'CANCELADO' },
+      }),
+    );
+
+    prisma.agendamento.findFirst.mockResolvedValue({
+      id: 13,
+      status: 'CANCELADO',
+    });
+    await expect(service.cancelar(3, 13)).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('rejects editing an appointment with a conflict', async () => {
+    prisma.agendamento.findFirst
+      .mockResolvedValueOnce({
+        id: 12,
+        status: 'AGENDADO',
+        clienteId: 2,
+        profissionalId: 7,
+        inicio: new Date('2027-01-10T09:00:00.000Z'),
+        servicos: [{
+          precoCobrado: 45.5,
+          servico: { id: 9, duracaoMin: 30 },
+        }],
+      })
+      .mockResolvedValueOnce({
+        id: 13,
+        inicio: new Date('2027-01-10T10:00:00.000Z'),
+        fim: new Date('2027-01-10T11:00:00.000Z'),
+      });
+    prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      nome: 'João',
+      ativo: true,
+    });
+    prisma.horarioProfissional.findFirst.mockResolvedValue({
+      inicio: '09:00',
+      fim: '18:00',
+      intervalos: [],
+    });
+    prisma.indisponibilidadeProfissional.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.update(3, 12, { inicio: '2027-01-10T10:00:00.000Z' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(prisma.agendamento.update).not.toHaveBeenCalled();
   });
 });

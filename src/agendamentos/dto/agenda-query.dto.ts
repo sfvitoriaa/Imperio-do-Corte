@@ -5,6 +5,11 @@ export class AgendaQueryDto {
     @IsOptional()
     @Type(() => Number)
     @IsInt()
+    clienteId?: number;
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
     profissionalId?: number;
 
     @IsOptional()

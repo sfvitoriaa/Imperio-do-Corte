@@ -5,6 +5,7 @@ import { AgendaQueryDto } from './dto/agenda-query.dto.js';
 import { UpdateStatusDto } from './dto/update-status.dto.js';
 import { EmpresaId } from '../common/empresa-id.decorator.js';
 import { DisponibilidadeQueryDto } from './dto/disponibilidade-query.dto.js';
+import { UpdateAgendamentoDto } from './dto/update-agendamento.dto.js';
 
 @Controller('agendamentos')
 export class AgendamentosController {
@@ -43,6 +44,23 @@ export class AgendamentosController {
     @Body() dto: UpdateStatusDto,
   ) {
     return this.agendamentosService.atualizarStatus(empresaId, id, dto);
+  }
+
+  @Patch(':id/editar')
+  update(
+    @EmpresaId() empresaId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateAgendamentoDto,
+  ) {
+    return this.agendamentosService.update(empresaId, id, dto);
+  }
+
+  @Post(':id/cancelar')
+  cancelar(
+    @EmpresaId() empresaId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.agendamentosService.cancelar(empresaId, id);
   }
 
   @Delete(':id')

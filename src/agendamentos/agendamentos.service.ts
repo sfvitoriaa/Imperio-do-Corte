@@ -5,6 +5,7 @@ import { UpdateStatusDto } from './dto/update-status.dto.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EmpresasService } from '../empresas/empresas.service.js';
 import { DisponibilidadeQueryDto } from './dto/disponibilidade-query.dto.js';
+import { UpdateAgendamentoDto } from './dto/update-agendamento.dto.js';
 
 const DETALHES = {
   cliente: { select: { id: true, nome: true, telefone: true } },
@@ -269,37 +270,47 @@ export class AgendamentosService {
       }
     }
 
-    const conflito = await this.prisma.agendamento.findFirst({
-      where: {
-        empresaId,
-        profissionalId: dto.profissionalId,
-        status: 'AGENDADO',
-        inicio: { lt: fim },
-        fim: { gt: inicio }
+    return this.prisma.$transaction(async (tx) => {
+      if (typeof (tx as any).$queryRawUnsafe === 'function') {
+        await (tx as any).$queryRawUnsafe(
+          'SELECT id FROM profissionais WHERE id = ? AND empresaId = ? FOR UPDATE',
+          dto.profissionalId,
+          empresaId,
+        );
       }
-    })
 
-    if (conflito) {
-      throw new ConflictException(
-        `${profissional.nome} já tem atendimento das ` + `${hora(conflito.inicio)} às ${hora(conflito.fim)}`
-      )
-    }
-
-    return this.prisma.agendamento.create({
-      data: {
-        inicio,
-        fim,
-        empresaId,
-        clienteId: dto.clienteId,
-        profissionalId: dto.profissionalId,
-        servicos: {
-          create: servicos.map((s) => ({
-            servicoId: s.id,
-            precoCobrado: s.preco
-          }))
+      const conflito = await tx.agendamento.findFirst({
+        where: {
+          empresaId,
+          profissionalId: dto.profissionalId,
+          status: 'AGENDADO',
+          inicio: { lt: fim },
+          fim: { gt: inicio }
         }
-      },
-      include: DETALHES
+      })
+
+      if (conflito) {
+        throw new ConflictException(
+          `${profissional.nome} já tem atendimento das ` + `${hora(conflito.inicio)} às ${hora(conflito.fim)}`
+        )
+      }
+
+      return tx.agendamento.create({
+        data: {
+          inicio,
+          fim,
+          empresaId,
+          clienteId: dto.clienteId,
+          profissionalId: dto.profissionalId,
+          servicos: {
+            create: servicos.map((s) => ({
+              servicoId: s.id,
+              precoCobrado: s.preco
+            }))
+          }
+        },
+        include: DETALHES
+      });
     });
   }
 
@@ -313,6 +324,7 @@ export class AgendamentosService {
       where: {
         empresaId,
         profissionalId: query.profissionalId,
+        ...(query.clienteId ? { clienteId: query.clienteId } : {}),
         inicio: inicio && fim ? { gte: inicio, lt: fim } : undefined,
       },
       include: DETALHES,
@@ -333,6 +345,145 @@ export class AgendamentosService {
     }
 
     return agendamento;
+  }
+
+  async update(
+    empresaId: number,
+    id: number,
+    dto: UpdateAgendamentoDto,
+  ) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+    const atual = await this.findOne(empresaId, id);
+    if (atual.status !== 'AGENDADO') {
+      throw new ConflictException('Somente agendamentos ativos podem ser editados');
+    }
+    if (!dto.clienteId && !dto.profissionalId && !dto.inicio && !dto.servicoIds) {
+      throw new BadRequestException('Informe ao menos uma informação para editar');
+    }
+
+    const clienteId = dto.clienteId ?? atual.clienteId;
+    const profissionalId = dto.profissionalId ?? atual.profissionalId;
+    if (clienteId === null || profissionalId === null) {
+      throw new BadRequestException('Cliente e profissional são obrigatórios');
+    }
+    const cliente = await this.prisma.cliente.findFirst({
+      where: { id: clienteId, empresaId },
+    });
+    if (!cliente) {
+      throw new NotFoundException('Cliente não encontrado nesta empresa');
+    }
+
+    const profissional = await this.prisma.profissional.findFirst({
+      where: { id: profissionalId, empresaId },
+    });
+    if (!profissional) {
+      throw new NotFoundException('Profissional não encontrado nesta empresa');
+    }
+    if (!profissional.ativo) {
+      throw new ConflictException('Profissional inativo não recebe agendamentos');
+    }
+
+    const servicos = dto.servicoIds
+      ? await this.prisma.servico.findMany({
+          where: { empresaId, ativo: true, id: { in: dto.servicoIds } },
+        })
+      : atual.servicos.map((item: any) => ({
+          ...item.servico,
+          preco: item.precoCobrado,
+        }));
+    if (dto.servicoIds && servicos.length !== dto.servicoIds.length) {
+      throw new NotFoundException('Serviço não encontrado ou inativo nesta empresa');
+    }
+
+    const inicio = dto.inicio ? new Date(dto.inicio) : new Date(atual.inicio);
+    if (Number.isNaN(inicio.getTime()) || inicio <= new Date()) {
+      throw new BadRequestException('Não é possível agendar numa data antiga');
+    }
+    const duracao = servicos.reduce((total: number, servico: any) => total + servico.duracaoMin, 0);
+    const fim = new Date(inicio.getTime() + duracao * 60_000);
+
+    const horario = await (this.prisma as any).horarioProfissional?.findFirst({
+      where: { empresaId, profissionalId, diaSemana: inicio.getUTCDay() },
+      include: { intervalos: true },
+    });
+    if (!horario) {
+      throw new ConflictException('Profissional não atende neste dia');
+    }
+    const inicioMin = inicio.getUTCHours() * 60 + inicio.getUTCMinutes();
+    const fimMin = fim.getUTCHours() * 60 + fim.getUTCMinutes();
+    if (inicioMin < this.horaParaMinutos(horario.inicio) ||
+      fimMin > this.horaParaMinutos(horario.fim)) {
+      throw new ConflictException('Agendamento fora do horário de trabalho');
+    }
+    if ((horario.intervalos ?? []).some((intervalo: any) =>
+      inicioMin < this.horaParaMinutos(intervalo.fim) &&
+      this.horaParaMinutos(intervalo.inicio) < fimMin)) {
+      throw new ConflictException('Agendamento coincide com um intervalo');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (typeof (tx as any).$queryRawUnsafe === 'function') {
+        await (tx as any).$queryRawUnsafe(
+          'SELECT id FROM profissionais WHERE id = ? AND empresaId = ? FOR UPDATE',
+          profissionalId,
+          empresaId,
+        );
+      }
+
+      const indisponibilidade = await (tx as any).indisponibilidadeProfissional?.findFirst({
+        where: { empresaId, profissionalId, inicio: { lt: fim }, fim: { gt: inicio } },
+      });
+      if (indisponibilidade) {
+        throw new ConflictException('Profissional folgado ou indisponível neste período');
+      }
+
+      const conflito = await tx.agendamento.findFirst({
+        where: {
+          id: { not: id },
+          empresaId,
+          profissionalId,
+          status: 'AGENDADO',
+          inicio: { lt: fim },
+          fim: { gt: inicio },
+        },
+      });
+      if (conflito) {
+        throw new ConflictException(
+          `${profissional.nome} já tem atendimento das ${hora(conflito.inicio)} às ${hora(conflito.fim)}`,
+        );
+      }
+
+      await tx.agendamentoServico.deleteMany({ where: { agendamentoId: id } });
+      return tx.agendamento.update({
+        where: { id, empresaId },
+        data: {
+          inicio,
+          fim,
+          clienteId,
+          profissionalId,
+          servicos: {
+            create: servicos.map((servico: any) => ({
+              servicoId: servico.id,
+              precoCobrado: servico.preco,
+            })),
+          },
+        },
+        include: DETALHES,
+      });
+    });
+  }
+
+  async cancelar(empresaId: number, id: number) {
+    await this.empresas.validarEmpresaAtiva(empresaId);
+    const agendamento = await this.findOne(empresaId, id);
+    if (agendamento.status !== 'AGENDADO') {
+      throw new ConflictException('Somente agendamentos ativos podem ser cancelados');
+    }
+    return this.prisma.agendamento.update({
+      where: { id, empresaId },
+      data: { status: 'CANCELADO' },
+      include: DETALHES,
+    });
   }
 
   async atualizarStatus(empresaId: number, id: number, dto: UpdateStatusDto) {
