@@ -1,6 +1,6 @@
-# BarberCut
+# Imperio do Corte
 
-Sistema web para apoiar a operação de barbearias: cadastro de empresas,
+Sistema web para apoiar a operação da barbearia Imperio do Corte: cadastro de empresas,
 clientes, profissionais e serviços, organização de horários e agendamentos,
 registro de pagamentos e consulta de indicadores.
 

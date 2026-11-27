@@ -10,7 +10,7 @@ const WORK_BREAK = { inicio: '12:00', fim: '13:00' };
 
 const companies = [
   {
-    nome: 'BarberCut Demonstração Centro',
+    nome: 'Imperio do Corte Demonstração Centro',
     cnpj: formatCnpj('123456780001'),
     telefone: '(11) 3000-1000',
     phonePrefix: '119876510',
@@ -28,7 +28,7 @@ const companies = [
     ],
   },
   {
-    nome: 'BarberCut Demonstração Jardins',
+    nome: 'Imperio do Corte Demonstração Jardins',
     cnpj: formatCnpj('987654320001'),
     telefone: '(21) 3000-2000',
     phonePrefix: '219876520',

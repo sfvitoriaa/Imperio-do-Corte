@@ -3079,7 +3079,7 @@ async function companySelectionContent() {
       <div class="selection-brand">
         <div class="brand-mark" aria-hidden="true">BC</div>
         <div>
-          <strong>BarberCut</strong>
+          <strong>Imperio do Corte</strong>
           <span>Painel administrativo</span>
         </div>
       </div>
@@ -3187,7 +3187,7 @@ async function renderRoute() {
   }
 
   if (route === 'empresas') {
-    document.title = `Selecionar empresa | BarberCut`;
+    document.title = `Selecionar empresa | Imperio do Corte`;
     document.body.classList.add('company-selection-mode');
     closeMenu();
     companySelectionContent();
@@ -3227,7 +3227,7 @@ async function renderRoute() {
   document.body.classList.remove('company-selection-mode');
   const page = pages.find((item) => item.id === route) || pages[0];
 
-  document.title = `${page.title} | BarberCut`;
+  document.title = `${page.title} | Imperio do Corte`;
   content.innerHTML = pageContent(page);
   document.querySelectorAll('.nav-link').forEach((link) => {
     link.classList.toggle('active', link.dataset.page === page.id);
