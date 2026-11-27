@@ -3,6 +3,10 @@ import { EmpresasService } from '../empresas/empresas.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { PagamentosService } from './pagamentos.service.js';
 
+vi.mock('../prisma/prisma.service.js', () => ({
+  PrismaService: class PrismaService {},
+}));
+
 describe('PagamentosService', () => {
   const prisma = {
     agendamento: { findFirst: vi.fn() },
@@ -12,6 +16,7 @@ describe('PagamentosService', () => {
       findMany: vi.fn(),
       findFirst: vi.fn(),
     },
+    $transaction: vi.fn(),
   };
   const empresas = { validarEmpresaAtiva: vi.fn().mockResolvedValue({}) };
   const service = new PagamentosService(
@@ -21,6 +26,9 @@ describe('PagamentosService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    );
   });
 
   it('registers a payment for a concluded appointment', async () => {
@@ -60,12 +68,19 @@ describe('PagamentosService', () => {
     await expect(
       service.registrar(3, 12, { forma: 'PIX' as any, valorPago: 30 }),
     ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.pagamento.upsert).not.toHaveBeenCalled();
   });
 
   it('rejects invalid payment values', async () => {
     await expect(
       service.registrar(3, 12, { forma: 'PIX' as any, valorPago: 0 }),
     ).rejects.toThrow('O valor pago deve ser maior que zero');
+  });
+
+  it('rejects payment values with more than two decimal places', async () => {
+    await expect(
+      service.registrar(3, 12, { forma: 'PIX' as any, valorPago: 20.001 }),
+    ).rejects.toThrow('O valor pago deve conter no máximo duas casas decimais');
   });
 
   it('does not register payment for an unfinished appointment', async () => {

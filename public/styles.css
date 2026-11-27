@@ -315,6 +315,7 @@ button { cursor: pointer; }
 }
 .status-pendente { border-color: #554924; color: var(--gold-light); }
 .status-agendado { border-color: #334e5d; color: #a4d5e8; }
+.status-realizado { border-color: #36573e; color: #9bd1a8; }
 
 .details-button {
   flex: 0 0 auto;
@@ -617,6 +618,54 @@ button { cursor: pointer; }
 .appointment-slot small { font-size: 8px; text-transform: uppercase; }
 .appointment-form .dialog-actions { margin-top: 0; }
 
+.payment-filters {
+  display: grid;
+  grid-template-columns: minmax(170px, .8fr) minmax(170px, .8fr) minmax(190px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+.payment-filters select, .payment-filters input, .payment-form select, .payment-form input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  background: #101113;
+  color: var(--text);
+  font-size: 13px;
+}
+.payment-filters select:focus, .payment-filters input:focus, .payment-form select:focus, .payment-form input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(201, 164, 75, .1);
+}
+.payments-table { min-width: 930px; }
+.payment-subtext { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+.payment-dialog { width: min(620px, calc(100vw - 32px)); }
+.payment-form { gap: 16px; }
+.payment-appointment-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #111214;
+  color: var(--muted);
+  font-size: 12px;
+}
+.payment-appointment-summary span { display: flex; flex-direction: column; gap: 5px; }
+.payment-appointment-summary span strong { color: var(--text); }
+.payment-appointment-summary span small { color: var(--muted); font-size: 11px; }
+.payment-appointment-summary > strong { color: var(--gold-light); white-space: nowrap; }
+.payment-details dl { margin: 0; }
+.payment-details dl div { padding: 11px 0; border-bottom: 1px solid var(--border); }
+.payment-details dl div:last-child { border-bottom: 0; }
+.payment-details dt { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
+.payment-details dd { margin: 0; font-size: 13px; }
+
 .service-price-note {
   margin: -8px 0 16px;
   padding: 11px 14px;
@@ -874,6 +923,8 @@ button { cursor: pointer; }
   .appointment-filters { grid-template-columns: 1fr 1fr; }
   .appointment-filters .search-field:first-child { grid-column: 1 / -1; }
   .appointment-filters .toolbar-actions { grid-column: 1 / -1; }
+  .payment-filters { grid-template-columns: 1fr 1fr; }
+  .payment-filters .toolbar-actions { grid-column: 1 / -1; }
   .quick-client-form { grid-template-columns: 1fr; }
   .toast-region { right: 12px; bottom: 12px; }
   .company-selection-page { justify-content: flex-start; padding: 32px 16px; }

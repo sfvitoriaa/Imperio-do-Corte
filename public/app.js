@@ -373,6 +373,7 @@ function pageContent(page) {
   if (page.id === 'profissionais') return professionalsContent();
   if (page.id === 'servicos') return servicesContent();
   if (page.id === 'agendamentos') return appointmentsContent();
+  if (page.id === 'pagamentos') return paymentsContent();
 
   const actionLabels = {
     agendamentos: 'Novo agendamento',
@@ -882,6 +883,320 @@ async function cancelAppointment(appointmentId) {
     await loadAppointments();
   } catch (error) {
     showToast(`Não foi possível cancelar o agendamento: ${error.message}`, 'error');
+  }
+}
+
+const paymentMethods = {
+  DINHEIRO: 'Dinheiro',
+  PIX: 'Pix',
+  CARTAO_DEBITO: 'Débito',
+  CARTAO_CREDITO: 'Crédito',
+};
+const paymentStatuses = { PENDENTE: 'Pendente', REALIZADO: 'Realizado' };
+let paymentsLoadSequence = 0;
+
+function paymentsContent() {
+  return `
+    <div class="page-header">
+      <div><h2>Pagamentos</h2><p>Registre e consulte pagamentos vinculados aos atendimentos</p></div>
+      <button class="action-button" type="button" id="new-payment">+ Registrar pagamento</button>
+    </div>
+    <div class="management-toolbar">
+      <form class="payment-filters" id="payment-filters">
+        <label class="search-field">Situação
+          <select name="status">
+            <option value="">Todos os pagamentos</option>
+            <option value="PENDENTE">Pendentes</option>
+            <option value="REALIZADO">Realizados</option>
+          </select>
+        </label>
+        <label class="search-field">Data do pagamento
+          <input type="date" name="data" />
+        </label>
+        <label class="search-field">Forma de pagamento
+          <select name="forma">
+            <option value="">Todas as formas</option>
+            <option value="DINHEIRO">Dinheiro</option>
+            <option value="PIX">Pix</option>
+            <option value="CARTAO_DEBITO">Débito</option>
+            <option value="CARTAO_CREDITO">Crédito</option>
+          </select>
+        </label>
+        <div class="toolbar-actions">
+          <button class="action-button" type="submit">Filtrar</button>
+          <button class="secondary-button" type="button" id="clear-payment-filters">Limpar</button>
+        </div>
+      </form>
+    </div>
+    <div class="management-error" id="payments-error" role="alert" hidden></div>
+    <div class="table-card">
+      <div class="table-scroll">
+        <table class="data-table payments-table">
+          <thead><tr><th>Data</th><th>Agendamento</th><th>Cliente</th><th>Forma</th><th>Valor</th><th>Situação</th><th class="actions-column">Ações</th></tr></thead>
+          <tbody id="payments-table-body"><tr><td colspan="7"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando pagamentos...</span></div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <dialog class="entity-dialog payment-dialog" id="payment-form-dialog" aria-labelledby="payment-form-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Registro manual</span><h2 id="payment-form-title">Registrar pagamento</h2></div>
+        <button class="dialog-close" type="button" data-close-payment aria-label="Fechar">&times;</button>
+      </div>
+      <div class="entity-dialog-content" id="payment-form-content"></div>
+    </dialog>
+    <dialog class="entity-dialog payment-dialog" id="payment-details-dialog" aria-labelledby="payment-details-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Consulta</span><h2 id="payment-details-title">Detalhes do pagamento</h2></div>
+        <button class="dialog-close" type="button" data-close-payment-details aria-label="Fechar">&times;</button>
+      </div>
+      <div class="entity-dialog-content payment-details" id="payment-details-content"></div>
+    </dialog>
+  `;
+}
+
+function paymentDateKey(payment) {
+  const date = new Date(payment.registradoEm || payment.criadoEm);
+  return Number.isNaN(date.getTime()) ? '' : localDateKey(date);
+}
+
+function initPaymentsPage() {
+  const body = document.querySelector('#payments-table-body');
+  if (!body) return;
+  const formDialog = document.querySelector('#payment-form-dialog');
+  const detailsDialog = document.querySelector('#payment-details-dialog');
+  document.querySelector('#new-payment').addEventListener('click', openPaymentForm);
+  document.querySelector('[data-close-payment]').addEventListener('click', () => formDialog.close());
+  document.querySelector('[data-close-payment-details]').addEventListener('click', () => detailsDialog.close());
+  formDialog.addEventListener('click', (event) => {
+    if (event.target === formDialog) formDialog.close();
+  });
+  detailsDialog.addEventListener('click', (event) => {
+    if (event.target === detailsDialog) detailsDialog.close();
+  });
+  document.querySelector('#payment-filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    loadPayments();
+  });
+  document.querySelector('#clear-payment-filters').addEventListener('click', () => {
+    document.querySelector('#payment-filters').reset();
+    loadPayments();
+  });
+  body.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-payment-action="details"]');
+    if (button) showPaymentDetails(button.dataset.paymentId);
+  });
+  loadPayments();
+}
+
+async function loadPayments() {
+  const body = document.querySelector('#payments-table-body');
+  const errorBox = document.querySelector('#payments-error');
+  const filters = document.querySelector('#payment-filters');
+  const companyId = selectedCompany?.id;
+  if (!body || !filters || !companyId) return;
+  const sequence = ++paymentsLoadSequence;
+  const status = filters.elements.status.value;
+  const date = filters.elements.data.value;
+  const forma = filters.elements.forma.value;
+  let endpoint = status === 'PENDENTE'
+    ? '/pagamentos/pendentes'
+    : status === 'REALIZADO'
+      ? '/pagamentos/realizados'
+      : '/pagamentos';
+
+  if (status === 'REALIZADO' && date) {
+    const start = new Date(`${date}T00:00:00`);
+    const end = new Date(`${date}T23:59:59.999`);
+    const params = new URLSearchParams({ inicio: start.toISOString(), fim: end.toISOString() });
+    endpoint = `/pagamentos/periodo?${params.toString()}`;
+  }
+
+  errorBox.hidden = true;
+  body.innerHTML = '<tr><td colspan="7"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando pagamentos...</span></div></td></tr>';
+  try {
+    const payments = await apiFetch(endpoint);
+    if (!Array.isArray(payments)) throw new Error('A API retornou uma lista de pagamentos inválida.');
+    if (selectedCompany?.id !== companyId || !body.isConnected || sequence !== paymentsLoadSequence) return;
+    const visible = payments.filter((payment) =>
+      (!date || paymentDateKey(payment) === date) &&
+      (!forma || payment.forma === forma),
+    );
+    body.innerHTML = visible.length
+      ? visible.map((payment) => `
+        <tr>
+          <td>${escapeHtml(formatDate(payment.registradoEm || payment.criadoEm))}</td>
+          <td><strong class="table-primary">#${payment.agendamentoId}</strong><small class="payment-subtext">${escapeHtml(payment.agendamento?.profissional?.nome || 'Atendimento')}</small></td>
+          <td>${escapeHtml(payment.agendamento?.cliente?.nome || 'Cliente não informado')}</td>
+          <td>${escapeHtml(paymentMethods[payment.forma] || 'Não informada')}</td>
+          <td>${payment.valorPago == null ? '—' : escapeHtml(formatCurrency(payment.valorPago))}</td>
+          <td><span class="status-badge status-${escapeHtml(String(payment.status).toLowerCase())}">${escapeHtml(paymentStatuses[payment.status] || payment.status)}</span></td>
+          <td class="table-actions"><button class="table-action" type="button" data-payment-action="details" data-payment-id="${payment.id}">Detalhes</button></td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="7"><div class="table-state"><strong>Nenhum pagamento encontrado</strong><span>Revise os filtros ou registre um pagamento de atendimento concluído.</span></div></td></tr>';
+  } catch (error) {
+    if (selectedCompany?.id !== companyId || !body.isConnected || sequence !== paymentsLoadSequence) return;
+    body.innerHTML = '<tr><td colspan="7"><div class="table-state">A lista de pagamentos não está disponível.</div></td></tr>';
+    errorBox.innerHTML = `<span>Não foi possível carregar os pagamentos: ${escapeHtml(error.message)}</span><button class="secondary-button" type="button" id="retry-payments">Tentar novamente</button>`;
+    errorBox.hidden = false;
+    document.querySelector('#retry-payments').addEventListener('click', loadPayments);
+  }
+}
+
+async function openPaymentForm() {
+  const dialog = document.querySelector('#payment-form-dialog');
+  const content = document.querySelector('#payment-form-content');
+  const companyId = selectedCompany?.id;
+  if (!dialog || !content || !companyId) return;
+  content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Buscando atendimentos concluídos...</span></div>';
+  dialog.showModal();
+  try {
+    const [appointments, payments] = await Promise.all([
+      apiFetch('/agendamentos/concluidos'),
+      apiFetch('/pagamentos/realizados'),
+    ]);
+    if (selectedCompany?.id !== companyId || !dialog.open) return;
+    if (!Array.isArray(appointments) || !Array.isArray(payments)) {
+      throw new Error('A API retornou dados inválidos para o registro.');
+    }
+    const alreadyRealized = new Set(
+      payments.filter((payment) => payment.status === 'REALIZADO').map((payment) => payment.agendamentoId),
+    );
+    const eligible = appointments.filter((appointment) =>
+      appointment.status === 'CONCLUIDO' && !alreadyRealized.has(appointment.id),
+    );
+    renderPaymentForm(eligible, companyId);
+  } catch (error) {
+    content.innerHTML = `<p class="form-error">Não foi possível preparar o registro: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderPaymentForm(appointments, companyId) {
+  const content = document.querySelector('#payment-form-content');
+  const options = appointments.map((appointment) => {
+    const services = (appointment.servicos || []).map((item) => item.servico?.nome).filter(Boolean).join(', ');
+    const price = appointmentPrice(appointment);
+    return `<option value="${appointment.id}">${escapeHtml(`${appointment.cliente?.nome || 'Cliente'} · ${agendaWallDate(appointment.inicio)} ${agendaWallTime(appointment.inicio)} · ${services || 'Serviço'} · ${formatCurrency(price)}`)}</option>`;
+  }).join('');
+  content.innerHTML = `
+    <form class="entity-form payment-form" id="payment-form" novalidate>
+      <label>Agendamento concluído
+        <select name="agendamentoId" required ${appointments.length ? '' : 'disabled'}>
+          <option value="">${appointments.length ? 'Selecione o atendimento' : 'Nenhum atendimento disponível para pagamento'}</option>
+          ${options}
+        </select>
+      </label>
+      <div class="payment-appointment-summary" id="payment-appointment-summary">Selecione o agendamento para consultar o cliente e o valor dos serviços.</div>
+      <div class="form-grid">
+        <label>Forma de pagamento
+          <select name="forma" required>
+            <option value="">Selecione</option>
+            <option value="DINHEIRO">Dinheiro</option>
+            <option value="PIX">Pix</option>
+            <option value="CARTAO_DEBITO">Débito</option>
+            <option value="CARTAO_CREDITO">Crédito</option>
+          </select>
+        </label>
+        <label>Valor recebido (R$)
+          <input name="valorPago" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0,00" required />
+        </label>
+      </div>
+      <small class="field-hint">O sistema apenas registra o recebimento; nenhum pagamento bancário será processado.</small>
+      <small class="field-error" id="payment-form-error" role="alert"></small>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-cancel-payment>Voltar</button>
+        <button class="action-button" type="submit" ${appointments.length ? '' : 'disabled'}>Registrar recebimento</button>
+      </div>
+    </form>
+  `;
+  const form = content.querySelector('#payment-form');
+  const amountInput = form.elements.valorPago;
+  const updateAppointmentSummary = () => {
+    const appointment = appointments.find((item) => item.id === Number(form.elements.agendamentoId.value));
+    if (!appointment) {
+      content.querySelector('#payment-appointment-summary').textContent =
+        'Selecione o agendamento para consultar o cliente e o valor dos serviços.';
+      return;
+    }
+    const serviceNames = (appointment.servicos || []).map((item) => item.servico?.nome).filter(Boolean).join(', ');
+    const amount = appointmentPrice(appointment);
+    content.querySelector('#payment-appointment-summary').innerHTML = `
+      <span><strong>${escapeHtml(appointment.cliente?.nome || 'Cliente não informado')}</strong><small>${escapeHtml(serviceNames || 'Serviço não informado')} · ${escapeHtml(`${agendaWallDate(appointment.inicio)} ${agendaWallTime(appointment.inicio)}`)}</small></span>
+      <strong>${escapeHtml(formatCurrency(amount))}</strong>
+    `;
+    amountInput.value = amount > 0 ? amount.toFixed(2) : '';
+  };
+  form.elements.agendamentoId.addEventListener('change', updateAppointmentSummary);
+  content.querySelector('[data-cancel-payment]').addEventListener('click', () => {
+    document.querySelector('#payment-form-dialog').close();
+  });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const errorBox = content.querySelector('#payment-form-error');
+    errorBox.textContent = '';
+    const rawAmount = amountInput.value.trim();
+    const amount = Number(rawAmount);
+    if (!form.elements.agendamentoId.value) {
+      errorBox.textContent = 'Selecione um agendamento concluído.';
+      return;
+    }
+    if (!/^\d+(?:\.\d{1,2})?$/.test(rawAmount) || !Number.isFinite(amount) || amount <= 0) {
+      errorBox.textContent = 'Informe um valor maior que zero com no máximo duas casas decimais.';
+      amountInput.focus();
+      return;
+    }
+    if (!form.elements.forma.value) {
+      errorBox.textContent = 'Selecione a forma de pagamento.';
+      form.elements.forma.focus();
+      return;
+    }
+
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await apiFetch(`/pagamentos/agendamento/${form.elements.agendamentoId.value}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ forma: form.elements.forma.value, valorPago: amount }),
+      });
+      if (selectedCompany?.id !== companyId) return;
+      document.querySelector('#payment-form-dialog').close();
+      showToast('Pagamento registrado com sucesso.');
+      await loadPayments();
+    } catch (error) {
+      errorBox.textContent = `Não foi possível registrar o pagamento: ${error.message}`;
+      showToast(`Falha ao registrar pagamento: ${error.message}`, 'error');
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
+}
+
+async function showPaymentDetails(paymentId) {
+  const dialog = document.querySelector('#payment-details-dialog');
+  const content = document.querySelector('#payment-details-content');
+  const companyId = selectedCompany?.id;
+  content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando detalhes...</span></div>';
+  dialog.showModal();
+  try {
+    const payment = await apiFetch(`/pagamentos/${paymentId}`);
+    if (selectedCompany?.id !== companyId || !dialog.open) return;
+    const appointment = payment.agendamento || {};
+    const services = (appointment.servicos || []).map((item) => item.servico?.nome).filter(Boolean).join(', ');
+    content.innerHTML = `
+      <dl>
+        <div><dt>Situação</dt><dd><span class="status-badge status-${escapeHtml(String(payment.status).toLowerCase())}">${escapeHtml(paymentStatuses[payment.status] || payment.status)}</span></dd></div>
+        <div><dt>Valor registrado</dt><dd>${payment.valorPago == null ? 'Ainda não registrado' : escapeHtml(formatCurrency(payment.valorPago))}</dd></div>
+        <div><dt>Forma de pagamento</dt><dd>${escapeHtml(paymentMethods[payment.forma] || 'Não informada')}</dd></div>
+        <div><dt>Registrado em</dt><dd>${escapeHtml(payment.registradoEm ? formatDateTime(payment.registradoEm) : 'Pendente')}</dd></div>
+        <div><dt>Agendamento</dt><dd>#${escapeHtml(String(payment.agendamentoId))} · ${escapeHtml(`${agendaWallDate(appointment.inicio)} ${agendaWallTime(appointment.inicio)}`)}</dd></div>
+        <div><dt>Cliente</dt><dd>${escapeHtml(appointment.cliente?.nome || 'Não informado')}</dd></div>
+        <div><dt>Profissional</dt><dd>${escapeHtml(appointment.profissional?.nome || 'Não informado')}</dd></div>
+        <div><dt>Serviços</dt><dd>${escapeHtml(services || 'Não informado')}</dd></div>
+      </dl>
+    `;
+  } catch (error) {
+    content.innerHTML = `<p class="form-error">Não foi possível consultar os detalhes: ${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -1890,6 +2205,7 @@ async function renderRoute() {
   if (page.id === 'profissionais') initProfessionalsPage();
   if (page.id === 'servicos') initServicesPage();
   if (page.id === 'agendamentos') initAppointmentsPage();
+  if (page.id === 'pagamentos') initPaymentsPage();
   closeMenu();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'smooth' });

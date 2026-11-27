@@ -9,6 +9,20 @@ import { EmpresasService } from '../empresas/empresas.service.js';
 import { RegistrarPagamentoDto } from './dto/registrar-pagamento.dto.js';
 import { PagamentoPeriodoDto } from './dto/pagamento-periodo.dto.js';
 
+const DETALHES_PAGAMENTO = {
+  agendamento: {
+    include: {
+      cliente: { select: { id: true, nome: true, telefone: true } },
+      profissional: { select: { id: true, nome: true } },
+      servicos: {
+        include: {
+          servico: { select: { id: true, nome: true, duracaoMin: true } },
+        },
+      },
+    },
+  },
+};
+
 @Injectable()
 export class PagamentosService {
   constructor(
@@ -22,8 +36,11 @@ export class PagamentosService {
     dto: RegistrarPagamentoDto,
   ) {
     await this.empresas.validarEmpresaAtiva(empresaId);
-    if (!dto.valorPago || dto.valorPago <= 0) {
+    if (!Number.isFinite(dto.valorPago) || dto.valorPago <= 0) {
       throw new BadRequestException('O valor pago deve ser maior que zero');
+    }
+    if (Number(dto.valorPago.toFixed(2)) !== dto.valorPago) {
+      throw new BadRequestException('O valor pago deve conter no máximo duas casas decimais');
     }
 
     const agendamento = await this.prisma.agendamento.findFirst({
@@ -39,30 +56,43 @@ export class PagamentosService {
       throw new ConflictException('Somente atendimentos concluídos podem receber pagamento');
     }
 
-    const existente = await this.prisma.pagamento.findUnique({
-      where: { agendamentoId },
-    });
-    if (existente?.status === 'REALIZADO') {
-      throw new ConflictException('Este agendamento já possui pagamento realizado');
-    }
+    return this.prisma.$transaction(async (tx) => {
+      const txWithLock = tx as typeof tx & {
+        $queryRawUnsafe?: (query: string, ...values: number[]) => Promise<unknown>;
+      };
+      if (typeof txWithLock.$queryRawUnsafe === 'function') {
+        await txWithLock.$queryRawUnsafe(
+          'SELECT id FROM agendamentos WHERE id = ? AND empresaId = ? FOR UPDATE',
+          agendamentoId,
+          empresaId,
+        );
+      }
 
-    return this.prisma.pagamento.upsert({
-      where: { agendamentoId },
-      create: {
-        agendamentoId,
-        empresaId,
-        forma: dto.forma,
-        valorPago: dto.valorPago,
-        status: 'REALIZADO',
-        registradoEm: new Date(),
-      },
-      update: {
-        forma: dto.forma,
-        valorPago: dto.valorPago,
-        status: 'REALIZADO',
-        registradoEm: new Date(),
-      },
-      include: { agendamento: true },
+      const existente = await tx.pagamento.findUnique({
+        where: { agendamentoId },
+      });
+      if (existente?.status === 'REALIZADO') {
+        throw new ConflictException('Este agendamento já possui pagamento realizado');
+      }
+
+      return tx.pagamento.upsert({
+        where: { agendamentoId },
+        create: {
+          agendamentoId,
+          empresaId,
+          forma: dto.forma,
+          valorPago: dto.valorPago,
+          status: 'REALIZADO',
+          registradoEm: new Date(),
+        },
+        update: {
+          forma: dto.forma,
+          valorPago: dto.valorPago,
+          status: 'REALIZADO',
+          registradoEm: new Date(),
+        },
+        include: DETALHES_PAGAMENTO,
+      });
     });
   }
 
@@ -70,7 +100,7 @@ export class PagamentosService {
     await this.empresas.validarEmpresaAtiva(empresaId);
     return this.prisma.pagamento.findMany({
       where: { empresaId },
-      include: { agendamento: true },
+      include: DETALHES_PAGAMENTO,
       orderBy: { criadoEm: 'desc' },
     });
   }
@@ -79,7 +109,7 @@ export class PagamentosService {
     await this.empresas.validarEmpresaAtiva(empresaId);
     const pagamento = await this.prisma.pagamento.findFirst({
       where: { id, empresaId },
-      include: { agendamento: true },
+      include: DETALHES_PAGAMENTO,
     });
     if (!pagamento) {
       throw new NotFoundException('Pagamento não encontrado');
@@ -91,7 +121,7 @@ export class PagamentosService {
     await this.empresas.validarEmpresaAtiva(empresaId);
     return this.prisma.pagamento.findMany({
       where: { empresaId, status: 'PENDENTE' },
-      include: { agendamento: true },
+      include: DETALHES_PAGAMENTO,
       orderBy: { criadoEm: 'desc' },
     });
   }
@@ -100,7 +130,7 @@ export class PagamentosService {
     await this.empresas.validarEmpresaAtiva(empresaId);
     return this.prisma.pagamento.findMany({
       where: { empresaId, status: 'REALIZADO' },
-      include: { agendamento: true },
+      include: DETALHES_PAGAMENTO,
       orderBy: { registradoEm: 'desc' },
     });
   }
@@ -118,7 +148,7 @@ export class PagamentosService {
         status: 'REALIZADO',
         registradoEm: { gte: inicio, lte: fim },
       },
-      include: { agendamento: true },
+      include: DETALHES_PAGAMENTO,
       orderBy: { registradoEm: 'desc' },
     });
   }
