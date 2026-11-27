@@ -55,6 +55,18 @@
       </main>
     </div>
 
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <dialog class="confirmation-dialog" id="confirmation-dialog">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Confirmação</span><h2 id="confirmation-title"></h2></div>
+      </div>
+      <p class="confirmation-message" id="confirmation-message"></p>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" id="confirmation-cancel">Voltar</button>
+        <button class="action-button" type="button" id="confirmation-confirm">Confirmar</button>
+      </div>
+    </dialog>
+
     <script src="/app.js"></script>
   </body>
 </html>

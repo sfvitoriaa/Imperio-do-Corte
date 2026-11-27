@@ -402,6 +402,146 @@ button { cursor: pointer; }
 .appointment-details dd { margin: 0; font-size: 14px; }
 .details-error { color: #efb4b4; line-height: 1.5; }
 
+.management-toolbar {
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.client-search-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.search-field, .entity-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #dedee0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.search-field input, .entity-form input, .entity-form textarea, .entity-form select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  background: #101113;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.search-field input:focus, .entity-form input:focus, .entity-form textarea:focus, .entity-form select:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(201, 164, 75, .1);
+}
+
+.toolbar-actions, .dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.secondary-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #202124;
+  color: #d7d7da;
+  font-weight: 600;
+}
+.secondary-button:hover { border-color: #55565b; background: #27282b; }
+.secondary-button:disabled, .table-action:disabled { cursor: wait; opacity: .6; }
+
+.table-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.table-scroll { overflow-x: auto; }
+.data-table { width: 100%; min-width: 700px; border-collapse: collapse; text-align: left; }
+.data-table th, .data-table td { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.data-table th { background: #1b1c1f; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.data-table td { color: #d5d5d7; font-size: 13px; }
+.data-table tbody tr:last-child td { border-bottom: 0; }
+.data-table tbody tr:hover { background: rgba(255, 255, 255, .018); }
+.table-primary { color: var(--text); font-weight: 650; }
+.actions-column { width: 190px; text-align: right; }
+.table-actions { text-align: right; white-space: nowrap; }
+.table-action {
+  min-height: 30px;
+  margin-left: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: #d8c27e;
+  font-size: 11px;
+}
+.table-action:hover { border-color: var(--gold); background: rgba(201, 164, 75, .07); }
+
+.table-state {
+  min-height: 116px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+.table-state strong { color: var(--text); font-size: 13px; }
+
+.entity-dialog, .confirmation-dialog {
+  width: min(540px, calc(100vw - 32px));
+  max-height: min(84vh, 720px);
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+}
+.entity-dialog::backdrop, .confirmation-dialog::backdrop { background: rgba(0, 0, 0, .72); backdrop-filter: blur(3px); }
+.entity-dialog .dialog-heading, .confirmation-dialog .dialog-heading { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+.entity-dialog-content { padding: 20px; }
+.entity-form { display: flex; flex-direction: column; gap: 17px; }
+.entity-form .dialog-actions { margin-top: 5px; }
+.entity-form textarea { min-height: 86px; resize: vertical; }
+.field-error { min-height: 0; color: #e8a4a4; font-size: 11px; font-weight: 400; }
+.field-hint { color: var(--muted); font-size: 11px; font-weight: 400; }
+.form-error { color: #efb4b4; font-size: 13px; line-height: 1.5; }
+.client-details dl, .entity-details dl { margin: 0 0 18px; }
+.client-details dl div, .entity-details dl div { padding: 11px 0; border-bottom: 1px solid var(--border); }
+.client-details dt, .entity-details dt { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
+.client-details dd, .entity-details dd { margin: 0; font-size: 14px; }
+.client-details h3 { margin: 20px 0 8px; font-size: 14px; }
+.history-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.history-item:last-child { border-bottom: 0; }
+.history-item div strong, .history-item div span { display: block; }
+.history-item div strong { font-size: 12px; }
+.history-item div span { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.status-concluido, .status-ativo { border-color: #36573e; color: #9bd1a8; }
+.status-cancelado, .status-inativo { border-color: #633d3d; color: #d99a9a; }
+
+.confirmation-dialog { width: min(430px, calc(100vw - 32px)); }
+.confirmation-message { margin: 0; padding: 20px; color: #c8c8cb; font-size: 14px; line-height: 1.55; }
+.confirmation-dialog > .dialog-actions { padding: 0 20px 20px; }
+
+.toast-region { position: fixed; right: 20px; bottom: 20px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
+.toast { max-width: min(420px, calc(100vw - 40px)); padding: 13px 16px; border: 1px solid #36573e; border-radius: 9px; background: #18221b; color: #b6dfbd; box-shadow: 0 10px 32px rgba(0, 0, 0, .35); font-size: 13px; }
+.toast-error { border-color: #633d3d; background: #281a1a; color: #e8b1b1; }
+
 .sidebar-backdrop { display: none; }
 
 .company-selection-mode .sidebar,
@@ -626,6 +766,12 @@ button { cursor: pointer; }
   .status-badge { margin-left: 76px; }
   .appointment-row .details-button { margin-left: auto; }
   .dashboard-error { align-items: flex-start; flex-direction: column; }
+  .client-search-form { grid-template-columns: 1fr; }
+  .toolbar-actions { justify-content: flex-start; }
+  .management-toolbar { padding: 12px; }
+  .data-table th, .data-table td { padding: 12px; }
+  .entity-dialog-content { padding: 16px; }
+  .toast-region { right: 12px; bottom: 12px; }
   .company-selection-page { justify-content: flex-start; padding: 32px 16px; }
   .company-grid { grid-template-columns: 1fr; }
   .selection-heading h2 { font-size: 27px; }

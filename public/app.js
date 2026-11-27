@@ -368,9 +368,9 @@ async function showAppointmentDetails(appointmentId, companyId) {
 
 function pageContent(page) {
   if (page.id === 'dashboard') return dashboardContent();
+  if (page.id === 'clientes') return clientsContent();
 
   const actionLabels = {
-    clientes: 'Novo cliente',
     profissionais: 'Novo profissional',
     servicos: 'Novo serviço',
     agendamentos: 'Novo agendamento',
@@ -394,6 +394,315 @@ function pageContent(page) {
       </div>
     </article>
   `;
+}
+
+function clientsContent() {
+  return `
+    <div class="page-header">
+      <div><h2>Clientes</h2><p>Consulte e mantenha os cadastros da empresa</p></div>
+      <button class="action-button" type="button" id="new-client">+ Novo cliente</button>
+    </div>
+    <div class="management-toolbar">
+      <form class="client-search-form" id="client-search-form">
+        <label class="search-field">
+          <span>Pesquisar por nome</span>
+          <input type="search" id="client-name-filter" placeholder="Nome do cliente" autocomplete="off" />
+        </label>
+        <label class="search-field">
+          <span>Pesquisar por telefone</span>
+          <input type="search" id="client-phone-filter" placeholder="Somente números ou telefone" inputmode="tel" autocomplete="off" />
+        </label>
+        <div class="toolbar-actions">
+          <button class="action-button" type="submit">Pesquisar</button>
+          <button class="secondary-button" type="button" id="clear-client-search">Limpar</button>
+        </div>
+      </form>
+    </div>
+    <div class="management-error" id="clients-error" role="alert" hidden></div>
+    <div class="table-card">
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Nome</th><th>Telefone</th><th>Cadastro</th><th class="actions-column">Ações</th></tr></thead>
+          <tbody id="clients-table-body">
+            <tr><td colspan="4"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando clientes...</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <dialog class="entity-dialog" id="client-dialog" aria-labelledby="client-dialog-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Cadastro de cliente</span><h2 id="client-dialog-title"></h2></div>
+        <button class="dialog-close" type="button" data-close-client aria-label="Fechar">&times;</button>
+      </div>
+      <div class="entity-dialog-content" id="client-dialog-content"></div>
+    </dialog>
+  `;
+}
+
+let toastTimeout;
+
+function showToast(message, type = 'success') {
+  const region = document.querySelector('#toast-region');
+  region.innerHTML = '';
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  region.append(toast);
+  window.clearTimeout(toastTimeout);
+  toastTimeout = window.setTimeout(() => toast.remove(), 4500);
+}
+
+function confirmAction(title, message) {
+  const dialog = document.querySelector('#confirmation-dialog');
+  const titleElement = document.querySelector('#confirmation-title');
+  const messageElement = document.querySelector('#confirmation-message');
+  const confirmButton = document.querySelector('#confirmation-confirm');
+  const cancelButton = document.querySelector('#confirmation-cancel');
+
+  titleElement.textContent = title;
+  messageElement.textContent = message;
+  dialog.showModal();
+
+  return new Promise((resolve) => {
+    const cleanup = (confirmed) => {
+      confirmButton.removeEventListener('click', onConfirm);
+      cancelButton.removeEventListener('click', onCancel);
+      dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('click', onBackdrop);
+      dialog.close();
+      resolve(confirmed);
+    };
+    const onConfirm = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (event) => {
+      if (event.target === dialog) onCancel();
+    };
+
+    confirmButton.addEventListener('click', onConfirm);
+    cancelButton.addEventListener('click', onCancel);
+    dialog.addEventListener('cancel', onCancel);
+    dialog.addEventListener('click', onBackdrop);
+  });
+}
+
+function formatPhone(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length === 11) return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  if (digits.length === 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return phone || 'Não informado';
+}
+
+function formatDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('pt-BR');
+}
+
+function initClientsPage() {
+  const page = document.querySelector('#clients-table-body');
+  if (!page) return;
+
+  const dialog = document.querySelector('#client-dialog');
+  document.querySelector('#new-client').addEventListener('click', () => openClientForm());
+  document.querySelector('[data-close-client]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+
+  document.querySelector('#client-search-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    loadClients();
+  });
+  document.querySelector('#clear-client-search').addEventListener('click', () => {
+    document.querySelector('#client-name-filter').value = '';
+    document.querySelector('#client-phone-filter').value = '';
+    loadClients();
+  });
+  document.querySelector('#clients-table-body').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-client-action]');
+    if (!button) return;
+    const { clientAction, clientId } = button.dataset;
+    if (clientAction === 'view') showClientDetails(clientId);
+    if (clientAction === 'edit') openClientForm({ id: Number(clientId) });
+  });
+
+  loadClients();
+}
+
+async function loadClients() {
+  const body = document.querySelector('#clients-table-body');
+  const error = document.querySelector('#clients-error');
+  if (!body || !selectedCompany?.id) return;
+  const companyId = selectedCompany.id;
+  const params = new URLSearchParams();
+  const name = document.querySelector('#client-name-filter').value.trim();
+  const phone = document.querySelector('#client-phone-filter').value.replace(/\D/g, '');
+  if (name) params.set('nome', name);
+  if (phone) params.set('telefone', phone);
+
+  error.hidden = true;
+  body.innerHTML = '<tr><td colspan="4"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando clientes...</span></div></td></tr>';
+
+  try {
+    const query = params.toString();
+    const clients = await apiFetch(`/clientes${query ? `?${query}` : ''}`);
+    if (!Array.isArray(clients)) throw new Error('A API retornou uma lista de clientes inválida.');
+    if (selectedCompany?.id !== companyId || !body.isConnected) return;
+
+    body.innerHTML = clients.length
+      ? clients.map((client) => `
+        <tr>
+          <td><strong class="table-primary">${escapeHtml(client.nome)}</strong></td>
+          <td>${escapeHtml(formatPhone(client.telefone))}</td>
+          <td>${escapeHtml(formatDate(client.criadoEm))}</td>
+          <td class="table-actions">
+            <button class="table-action" type="button" data-client-action="view" data-client-id="${client.id}">Consultar</button>
+            <button class="table-action" type="button" data-client-action="edit" data-client-id="${client.id}">Editar</button>
+          </td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="4"><div class="table-state"><strong>Nenhum cliente encontrado</strong><span>Altere os filtros ou cadastre um novo cliente.</span></div></td></tr>';
+  } catch (requestError) {
+    if (selectedCompany?.id !== companyId || !body.isConnected) return;
+    body.innerHTML = '<tr><td colspan="4"><div class="table-state">A lista não está disponível.</div></td></tr>';
+    error.innerHTML = `<span>Não foi possível carregar os clientes: ${escapeHtml(requestError.message)}</span><button class="secondary-button" type="button" id="retry-clients">Tentar novamente</button>`;
+    error.hidden = false;
+    document.querySelector('#retry-clients').addEventListener('click', loadClients);
+  }
+}
+
+async function openClientForm(client = null) {
+  const dialog = document.querySelector('#client-dialog');
+  const title = document.querySelector('#client-dialog-title');
+  const content = document.querySelector('#client-dialog-content');
+  let current = client;
+
+  if (client?.id) {
+    title.textContent = 'Editar cliente';
+    content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando dados...</span></div>';
+    if (!dialog.open) dialog.showModal();
+    try {
+      current = await apiFetch(`/clientes/${client.id}`);
+    } catch (error) {
+      content.innerHTML = `<p class="form-error">Não foi possível carregar o cliente: ${escapeHtml(error.message)}</p>`;
+      return;
+    }
+  } else {
+    title.textContent = 'Novo cliente';
+    current = null;
+  }
+
+  content.innerHTML = `
+    <form class="entity-form" id="client-form" novalidate>
+      <label>Nome completo
+        <input name="nome" required maxlength="191" autocomplete="name" value="${escapeHtml(current?.nome || '')}" />
+        <small class="field-error" data-error="nome"></small>
+      </label>
+      <label>Telefone com DDD
+        <input name="telefone" type="tel" required inputmode="tel" autocomplete="tel" placeholder="11987654321" value="${escapeHtml(current?.telefone || '')}" />
+        <small class="field-error" data-error="telefone"></small>
+        <small class="field-hint">Informe 10 ou 11 dígitos, incluindo o DDD.</small>
+      </label>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-close-form>Cancelar</button>
+        <button class="action-button" type="submit">${current ? 'Salvar alterações' : 'Cadastrar cliente'}</button>
+      </div>
+    </form>
+  `;
+
+  content.querySelector('[data-close-form]').addEventListener('click', () => dialog.close());
+  content.querySelector('#client-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const payload = {
+      nome: String(formData.get('nome') || '').trim(),
+      telefone: String(formData.get('telefone') || '').replace(/\D/g, ''),
+    };
+    const errors = {
+      nome: !payload.nome ? 'Informe o nome do cliente.' : '',
+      telefone: !/^\d{10,11}$/.test(payload.telefone) ? 'Use DDD e número, somente dígitos (10 ou 11).' : '',
+    };
+    Object.entries(errors).forEach(([field, message]) => {
+      form.querySelector(`[data-error="${field}"]`).textContent = message;
+    });
+    if (Object.values(errors).some(Boolean)) return;
+
+    const confirmed = await confirmAction(
+      current ? 'Confirmar alteração' : 'Confirmar cadastro',
+      current ? `Salvar as alterações do cadastro de ${payload.nome}?` : `Cadastrar ${payload.nome} nesta empresa?`,
+    );
+    if (!confirmed) return;
+
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await apiFetch(current ? `/clientes/${current.id}` : '/clientes', {
+        method: current ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      dialog.close();
+      showToast(current ? 'Cliente atualizado com sucesso.' : 'Cliente cadastrado com sucesso.');
+      await loadClients();
+    } catch (error) {
+      showToast(`Não foi possível salvar o cliente: ${error.message}`, 'error');
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
+
+  if (!dialog.open) dialog.showModal();
+}
+
+async function showClientDetails(clientId) {
+  const dialog = document.querySelector('#client-dialog');
+  const title = document.querySelector('#client-dialog-title');
+  const content = document.querySelector('#client-dialog-content');
+  title.textContent = 'Informações do cliente';
+  content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando informações...</span></div>';
+  dialog.showModal();
+
+  try {
+    const client = await apiFetch(`/clientes/${clientId}`);
+    title.textContent = client.nome;
+    content.innerHTML = `
+      <div class="client-details">
+        <dl>
+          <div><dt>Nome</dt><dd>${escapeHtml(client.nome)}</dd></div>
+          <div><dt>Telefone</dt><dd>${escapeHtml(formatPhone(client.telefone))}</dd></div>
+          <div><dt>Cadastrado em</dt><dd>${escapeHtml(formatDate(client.criadoEm))}</dd></div>
+        </dl>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" id="client-history">Histórico de agendamentos</button>
+          <button class="action-button" type="button" id="edit-client-detail">Editar</button>
+        </div>
+        <div id="client-history-content"></div>
+      </div>
+    `;
+    content.querySelector('#client-history').addEventListener('click', () => loadClientHistory(client.id));
+    content.querySelector('#edit-client-detail').addEventListener('click', () => openClientForm(client));
+  } catch (error) {
+    content.innerHTML = `<p class="form-error">Não foi possível consultar o cliente: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function loadClientHistory(clientId) {
+  const history = document.querySelector('#client-history-content');
+  history.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando histórico...</span></div>';
+  try {
+    const appointments = await apiFetch(`/agendamentos/historico/cliente/${clientId}`);
+    if (!Array.isArray(appointments)) throw new Error('A API retornou um histórico inválido.');
+    history.innerHTML = appointments.length
+      ? `<h3>Agendamentos anteriores</h3><div class="history-list">${appointments.map((appointment) => `
+          <article class="history-item">
+            <div><strong>${escapeHtml(formatDate(appointment.inicio))}</strong><span>${escapeHtml(appointment.profissional?.nome || 'Profissional não informado')}</span></div>
+            <span class="status-badge status-${String(appointment.status).toLowerCase()}">${escapeHtml(appointmentStatusLabels[appointment.status] || appointment.status)}</span>
+          </article>
+        `).join('')}</div>`
+      : '<div class="table-state"><strong>Nenhum agendamento no histórico</strong></div>';
+  } catch (error) {
+    history.innerHTML = `<p class="form-error">Não foi possível carregar o histórico: ${escapeHtml(error.message)}</p>`;
+  }
 }
 
 async function companySelectionContent() {
@@ -549,6 +858,7 @@ async function renderRoute() {
     });
     loadDashboard();
   }
+  if (page.id === 'clientes') initClientsPage();
   closeMenu();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'smooth' });
