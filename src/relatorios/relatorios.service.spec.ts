@@ -3,6 +3,10 @@ import { EmpresasService } from '../empresas/empresas.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RelatoriosService } from './relatorios.service.js';
 
+vi.mock('../prisma/prisma.service.js', () => ({
+  PrismaService: class PrismaService {},
+}));
+
 describe('RelatoriosService', () => {
   const prisma = {
     agendamento: { findMany: vi.fn(), count: vi.fn() },

@@ -464,6 +464,7 @@ function pageContent(page) {
   if (page.id === 'agendamentos') return appointmentsContent();
   if (page.id === 'pagamentos') return paymentsContent();
   if (page.id === 'notificacoes') return notificationsContent();
+  if (page.id === 'relatorios') return reportsContent();
 
   const actionLabels = {
     agendamentos: 'Novo agendamento',
@@ -1493,6 +1494,216 @@ async function showNotificationDetails(notification, companyId) {
   }
 }
 
+let reportsLoadSequence = 0;
+
+function reportsContent() {
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  return `
+    <div class="page-header">
+      <div><h2>Relatórios</h2><p>Indicadores da empresa no período selecionado</p></div>
+      <button class="secondary-button" type="button" id="refresh-reports">Atualizar</button>
+    </div>
+    <div class="management-toolbar">
+      <form class="report-filters" id="report-filters">
+        <label class="search-field">De
+          <input type="date" name="inicio" required value="${localDateKey(monthStart)}" />
+        </label>
+        <label class="search-field">Até
+          <input type="date" name="fim" required value="${localDateKey(today)}" />
+        </label>
+        <div class="toolbar-actions">
+          <button class="action-button" type="submit">Consultar período</button>
+        </div>
+      </form>
+      <div class="report-presets" aria-label="Períodos rápidos">
+        <button class="table-action" type="button" data-report-days="0">Hoje</button>
+        <button class="table-action" type="button" data-report-days="7">Últimos 7 dias</button>
+        <button class="table-action" type="button" data-report-days="30">Últimos 30 dias</button>
+        <button class="table-action" type="button" data-report-days="month">Este mês</button>
+      </div>
+    </div>
+    <div class="management-error" id="reports-error" role="alert" hidden></div>
+    <div class="report-period-label" id="report-period-label" aria-live="polite"></div>
+    <p class="report-empty-note" id="report-empty-note" hidden></p>
+    <div class="report-indicators" id="report-indicators" aria-live="polite">
+      ${['Atendimentos', 'Pagamentos registrados', 'Cancelamentos']
+        .map((label) => `<article class="card report-indicator"><h3>${label}</h3><p class="card-value"><span class="spinner" aria-label="Carregando"></span></p></article>`)
+        .join('')}
+    </div>
+    <div class="report-charts" id="report-charts">
+      <section class="report-chart-panel"><div class="report-chart-heading"><h3>Serviços mais realizados</h3><span>Atendimentos concluídos</span></div><div class="report-chart-content table-state"><span class="spinner" aria-label="Carregando"></span><span>Buscando dados...</span></div></section>
+      <section class="report-chart-panel"><div class="report-chart-heading"><h3>Profissionais com mais atendimentos</h3><span>Atendimentos concluídos</span></div><div class="report-chart-content table-state"><span class="spinner" aria-label="Carregando"></span><span>Buscando dados...</span></div></section>
+    </div>
+  `;
+}
+
+function initReportsPage() {
+  const form = document.querySelector('#report-filters');
+  if (!form) return;
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    loadReports();
+  });
+  document.querySelector('#refresh-reports').addEventListener('click', loadReports);
+  document.querySelectorAll('[data-report-days]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const end = new Date();
+      const range = button.dataset.reportDays;
+      const start = new Date(end);
+      if (range === 'month') {
+        start.setDate(1);
+      } else {
+        start.setDate(start.getDate() - Math.max(0, Number(range) - 1));
+      }
+      form.elements.inicio.value = localDateKey(start);
+      form.elements.fim.value = localDateKey(end);
+      loadReports();
+    });
+  });
+  loadReports();
+}
+
+function isValidReport(report) {
+  return report &&
+    Number.isInteger(report.atendimentos) &&
+    report.atendimentos >= 0 &&
+    Number.isInteger(report.cancelamentos) &&
+    report.cancelamentos >= 0 &&
+    report.pagamentos &&
+    Number.isInteger(report.pagamentos.quantidade) &&
+    report.pagamentos.quantidade >= 0 &&
+    Number.isFinite(report.pagamentos.total) &&
+    report.pagamentos.total >= 0 &&
+    Array.isArray(report.servicosMaisRealizados) &&
+    report.servicosMaisRealizados.every((item) =>
+      item && typeof item.nome === 'string' && Number.isInteger(item.quantidade) && item.quantidade >= 0,
+    ) &&
+    Array.isArray(report.profissionaisComMaisAtendimentos) &&
+    report.profissionaisComMaisAtendimentos.every((item) =>
+      item && typeof item.nome === 'string' && Number.isInteger(item.atendimentos) && item.atendimentos >= 0,
+    );
+}
+
+function renderReportBars(items, labelKey, valueKey, emptyMessage) {
+  if (!items.length) return `<div class="report-chart-empty">${escapeHtml(emptyMessage)}</div>`;
+  const values = items.map((item) => Number(item[valueKey]));
+  const maxValue = Math.max(...values);
+  return `<ol class="report-bars">${items.map((item, index) => {
+    const value = values[index];
+    const width = maxValue > 0 ? Math.max(0, Math.min(100, (value / maxValue) * 100)) : 0;
+    return `
+      <li class="report-bar-row">
+        <div class="report-bar-label"><span>${escapeHtml(item[labelKey])}</span><strong>${escapeHtml(String(value))}</strong></div>
+        <div class="report-bar-track" role="img" aria-label="${escapeHtml(`${item[labelKey]}: ${value}`)}">
+          <span style="width: ${width}%"></span>
+        </div>
+      </li>
+    `;
+  }).join('')}</ol>`;
+}
+
+async function loadReports() {
+  const form = document.querySelector('#report-filters');
+  const errorBox = document.querySelector('#reports-error');
+  const indicators = document.querySelector('#report-indicators');
+  const charts = document.querySelector('#report-charts');
+  const periodLabel = document.querySelector('#report-period-label');
+  const emptyNote = document.querySelector('#report-empty-note');
+  const companyId = selectedCompany?.id;
+  if (!form || !companyId) return;
+  const inicio = form.elements.inicio.value;
+  const fim = form.elements.fim.value;
+  const sequence = ++reportsLoadSequence;
+  const submit = form.querySelector('[type="submit"]');
+  errorBox.hidden = true;
+  emptyNote.hidden = true;
+  emptyNote.textContent = '';
+  if (!inicio || !fim || inicio > fim) {
+    submit.disabled = false;
+    errorBox.textContent = 'Informe um período válido. A data inicial deve ser anterior ou igual à data final.';
+    errorBox.hidden = false;
+    periodLabel.textContent = '';
+    indicators.innerHTML = '';
+    charts.querySelectorAll('.report-chart-content').forEach((panel) => {
+      panel.className = 'report-chart-content';
+      panel.textContent = 'Informe um período válido.';
+    });
+    return;
+  }
+  submit.disabled = true;
+  periodLabel.textContent = '';
+  indicators.innerHTML = ['Atendimentos', 'Pagamentos registrados', 'Cancelamentos']
+    .map((label) => `<article class="card report-indicator"><h3>${label}</h3><p class="card-value"><span class="spinner" aria-label="Carregando"></span></p></article>`)
+    .join('');
+  charts.querySelectorAll('.report-chart-content').forEach((panel) => {
+    panel.className = 'report-chart-content table-state';
+    panel.innerHTML = '<span class="spinner" aria-label="Carregando"></span><span>Buscando dados...</span>';
+  });
+  try {
+    const params = new URLSearchParams({ inicio, fim });
+    const report = await apiFetch(`/relatorios?${params.toString()}`);
+    if (!isValidReport(report)) throw new Error('A API retornou dados inválidos para o relatório.');
+    if (selectedCompany?.id !== companyId || !form.isConnected || sequence !== reportsLoadSequence) return;
+
+    const hasRecords = report.atendimentos > 0 ||
+      report.cancelamentos > 0 ||
+      report.pagamentos.quantidade > 0 ||
+      report.servicosMaisRealizados.length > 0 ||
+      report.profissionaisComMaisAtendimentos.length > 0;
+    periodLabel.textContent = `Período: ${formatDate(`${inicio}T00:00:00`)} a ${formatDate(`${fim}T00:00:00`)}`;
+    indicators.innerHTML = `
+      <article class="card report-indicator">
+        <h3>Atendimentos</h3>
+        <p class="card-value">${escapeHtml(String(report.atendimentos))}</p>
+        <span>Registros no período</span>
+      </article>
+      <article class="card report-indicator report-payment-indicator">
+        <h3>Total de pagamentos</h3>
+        <p class="card-value">${escapeHtml(formatCurrency(report.pagamentos.total))}</p>
+        <span>${escapeHtml(String(report.pagamentos.quantidade))} pagamento(s) registrado(s)</span>
+      </article>
+      <article class="card report-indicator report-cancellation-indicator">
+        <h3>Cancelamentos</h3>
+        <p class="card-value">${escapeHtml(String(report.cancelamentos))}</p>
+        <span>Agendamentos cancelados no período</span>
+      </article>
+    `;
+    const panels = charts.querySelectorAll('.report-chart-content');
+    panels[0].className = 'report-chart-content';
+    panels[0].innerHTML = renderReportBars(
+      report.servicosMaisRealizados,
+      'nome',
+      'quantidade',
+      'Nenhum serviço concluído neste período.',
+    );
+    panels[1].className = 'report-chart-content';
+    panels[1].innerHTML = renderReportBars(
+      report.profissionaisComMaisAtendimentos,
+      'nome',
+      'atendimentos',
+      'Nenhum atendimento concluído neste período.',
+    );
+    charts.classList.toggle('report-charts-empty', !hasRecords);
+    if (!hasRecords) {
+      emptyNote.textContent = 'Não há registros para o período selecionado.';
+      emptyNote.hidden = false;
+    }
+  } catch (error) {
+    if (selectedCompany?.id !== companyId || !form.isConnected || sequence !== reportsLoadSequence) return;
+    indicators.innerHTML = '';
+    charts.querySelectorAll('.report-chart-content').forEach((panel) => {
+      panel.className = 'report-chart-content';
+      panel.textContent = 'Dados indisponíveis.';
+    });
+    errorBox.innerHTML = `<span>Não foi possível carregar o relatório: ${escapeHtml(error.message)}</span><button class="secondary-button" type="button" id="retry-reports">Tentar novamente</button>`;
+    errorBox.hidden = false;
+    document.querySelector('#retry-reports').addEventListener('click', loadReports);
+  } finally {
+    if (submit.isConnected && sequence === reportsLoadSequence) submit.disabled = false;
+  }
+}
+
 function clientsContent() {
   return `
     <div class="page-header">
@@ -2501,6 +2712,7 @@ async function renderRoute() {
   if (page.id === 'agendamentos') initAppointmentsPage();
   if (page.id === 'pagamentos') initPaymentsPage();
   if (page.id === 'notificacoes') initNotificationsPage();
+  if (page.id === 'relatorios') initReportsPage();
   closeMenu();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'smooth' });
