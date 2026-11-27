@@ -24,7 +24,9 @@ atendente, com os dados separados por empresa e persistidos no banco de dados.
 ## Funcionalidades
 
 - Dashboard com indicadores calculados a partir dos dados da empresa.
-- Cadastro e manutenção de empresas, clientes, profissionais e serviços.
+- Seleção da empresa de trabalho e manutenção de clientes, profissionais e
+  serviços no painel. A API também oferece operações de criação e atualização
+  de empresas.
 - Agendamentos com consulta de disponibilidade, edição, cancelamento e consulta
   de situação e histórico.
 - Configuração da jornada semanal, intervalos, folgas e indisponibilidades dos
@@ -161,8 +163,9 @@ Parâmetros de consulta usados pelas telas:
 - `GET /agendamentos`: `data`, `clienteId` e/ou `profissionalId`.
 - `GET /agendamentos/disponibilidade`: `profissionalId`, `data` e `servicoId`
   ou `servicoIds`.
-- `GET /pagamentos/periodo` e `GET /relatorios`: `inicio` e `fim` no formato
-  `AAAA-MM-DD`.
+- `GET /pagamentos/periodo`: `inicio` e `fim` como instantes ISO 8601. A
+  interface envia limites do dia no fuso de São Paulo.
+- `GET /relatorios`: `inicio` e `fim` no formato `AAAA-MM-DD`.
 
 ## Regras de negócio
 
@@ -187,6 +190,13 @@ Parâmetros de consulta usados pelas telas:
   demonstração são inseridos somente quando o seed é executado explicitamente.
 - A API não oferece controle de leitura de notificações: o estado de leitura da
   interface fica salvo no navegador.
+
+## Segurança e limitações de acesso
+
+O cabeçalho `x-empresa-id` aplica o escopo dos dados, mas não autentica nem
+autoriza o usuário. A implementação atual não possui login ou controle de
+permissões; não exponha a API publicamente antes de implementar autenticação e
+autorização por empresa.
 
 ## Decisões de produto
 
