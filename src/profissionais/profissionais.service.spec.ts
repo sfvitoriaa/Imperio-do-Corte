@@ -31,6 +31,9 @@ describe('ProfissionaisService', () => {
       findFirst: vi.fn(),
       create: vi.fn(),
     },
+    notificacaoInterna: {
+      upsert: vi.fn(),
+    },
     $transaction: vi.fn(),
   };
   const empresas = {
@@ -200,5 +203,39 @@ describe('ProfissionaisService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(prisma.indisponibilidadeProfissional.create).not.toHaveBeenCalled();
+  });
+
+  it('creates one internal notification when an existing work shift changes', async () => {
+    prisma.profissional.findUnique.mockResolvedValue(profissional);
+    prisma.horarioProfissional.findFirst.mockResolvedValue({
+      id: 21,
+      inicio: '09:00',
+      fim: '17:00',
+      intervalos: [],
+    });
+    prisma.horarioProfissional.upsert.mockResolvedValue({ id: 21 });
+    prisma.horarioProfissional.findMany.mockResolvedValue([]);
+    prisma.indisponibilidadeProfissional.findMany.mockResolvedValue([]);
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    );
+
+    await service.definirHorarios(3, 8, {
+      diaSemana: 1,
+      inicio: '10:00',
+      fim: '18:00',
+    });
+
+    expect(prisma.notificacaoInterna.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          empresaId_tipo_entidadeId: {
+            empresaId: 3,
+            tipo: 'ALTERACAO_HORARIO',
+            entidadeId: 21,
+          },
+        },
+      }),
+    );
   });
 });

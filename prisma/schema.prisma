@@ -26,6 +26,7 @@ model Empresa {
   horarios      HorarioProfissional[]
   indisponibilidades IndisponibilidadeProfissional[]
   pagamentos Pagamento[]
+  notificacoes NotificacaoInterna[]
 
   @@map("empresas")
 }
@@ -171,4 +172,21 @@ model Pagamento {
   agendamentoId  Int             @unique
 
   @@map("pagamentos")
+}
+
+enum TipoNotificacaoInterna {
+  ALTERACAO_HORARIO
+}
+
+model NotificacaoInterna {
+  id            Int                    @id @default(autoincrement())
+  tipo          TipoNotificacaoInterna
+  entidadeId    Int
+  mensagem      String
+  criadoEm      DateTime               @default(now())
+  empresa       Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  empresaId     Int
+
+  @@unique([empresaId, tipo, entidadeId])
+  @@map("notificacoes_internas")
 }

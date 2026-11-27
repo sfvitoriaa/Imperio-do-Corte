@@ -146,6 +146,25 @@ export class ProfissionaisService {
 
     for (const horario of horarios) {
       await this.prisma.$transaction(async (tx) => {
+        const anterior = await tx.horarioProfissional.findFirst({
+          where: {
+            profissionalId,
+            empresaId,
+            diaSemana: horario.diaSemana,
+          },
+          include: { intervalos: true },
+        });
+        const novosIntervalos = [...(horario.intervalos ?? [])]
+          .sort((a, b) => a.inicio.localeCompare(b.inicio));
+        const intervalosAnteriores = [...(anterior?.intervalos ?? [])]
+          .map(({ inicio, fim }) => ({ inicio, fim }))
+          .sort((a, b) => a.inicio.localeCompare(b.inicio));
+        const houveAlteracao = anterior && (
+          anterior.inicio !== horario.inicio ||
+          anterior.fim !== horario.fim ||
+          JSON.stringify(intervalosAnteriores) !== JSON.stringify(novosIntervalos)
+        );
+
         const registro = await tx.horarioProfissional.upsert({
           where: {
             profissionalId_empresaId_diaSemana: {
@@ -172,6 +191,28 @@ export class ProfissionaisService {
               inicio: intervalo.inicio,
               fim: intervalo.fim,
             })),
+          });
+        }
+
+        if (houveAlteracao) {
+          await tx.notificacaoInterna.upsert({
+            where: {
+              empresaId_tipo_entidadeId: {
+                empresaId,
+                tipo: 'ALTERACAO_HORARIO',
+                entidadeId: registro.id,
+              },
+            },
+            create: {
+              empresaId,
+              tipo: 'ALTERACAO_HORARIO',
+              entidadeId: registro.id,
+              mensagem: `Jornada do profissional ${profissionalId} alterada para o dia ${horario.diaSemana}`,
+            },
+            update: {
+              mensagem: `Jornada do profissional ${profissionalId} alterada para o dia ${horario.diaSemana}`,
+              criadoEm: new Date(),
+            },
           });
         }
       });
