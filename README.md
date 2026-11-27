@@ -23,7 +23,16 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+BarberCut is a NestJS application with a browser interface served by the same API.
+
+### Database and business time
+
+Set `DATABASE_URL` before starting the application, then generate the Prisma client
+from the current schema with `pnpm exec prisma generate`.
+
+Appointment, work-schedule, time-off, payment, and report dates use the
+`America/Sao_Paulo` business time zone. The API stores timestamps as UTC instants
+and interprets date-only filters as São Paulo calendar days.
 
 ## Project setup
 

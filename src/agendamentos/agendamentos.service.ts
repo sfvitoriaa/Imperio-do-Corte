@@ -6,6 +6,15 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { EmpresasService } from '../empresas/empresas.service.js';
 import { DisponibilidadeQueryDto } from './dto/disponibilidade-query.dto.js';
 import { UpdateAgendamentoDto } from './dto/update-agendamento.dto.js';
+import {
+  businessDateKey,
+  businessDateTime,
+  businessDayBounds,
+  businessMinutes,
+  businessWeekday,
+  BUSINESS_TIME_ZONE,
+  isValidBusinessDateKey,
+} from '../common/business-time.js';
 
 const DETALHES = {
   cliente: { select: { id: true, nome: true, telefone: true } },
@@ -19,7 +28,14 @@ const DETALHES = {
 }
 
 const hora = (d: Date) =>
-  d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  d.toLocaleTimeString('pt-BR', {
+    timeZone: BUSINESS_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+const formatMinutes = (minutes: number) =>
+  `${Math.floor(minutes / 60).toString().padStart(2, '0')}:${(minutes % 60).toString().padStart(2, '0')}`;
 
 @Injectable()
 export class AgendamentosService {
@@ -39,14 +55,11 @@ export class AgendamentosService {
   ) {
     await this.empresas.validarEmpresaAtiva(empresaId);
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(query.data)) {
+    if (!isValidBusinessDateKey(query.data)) {
       throw new BadRequestException('data deve estar no formato AAAA-MM-DD');
     }
 
-    const dia = new Date(`${query.data}T00:00:00.000Z`);
-    if (Number.isNaN(dia.getTime()) || dia.toISOString().slice(0, 10) !== query.data) {
-      throw new BadRequestException('Data inválida');
-    }
+    const { start: dia, end: fimDia } = businessDayBounds(query.data);
 
     const profissional = await this.prisma.profissional.findFirst({
       where: { id: query.profissionalId, empresaId },
@@ -79,19 +92,11 @@ export class AgendamentosService {
       throw new NotFoundException('Serviço não encontrado ou inativo nesta empresa');
     }
 
-    const horarioDelegate = (this.prisma as unknown as {
-      horarioProfissional?: { findFirst: (args: unknown) => Promise<any> };
-    }).horarioProfissional;
-
-    if (!horarioDelegate?.findFirst) {
-      return [];
-    }
-
-    const horario = await horarioDelegate.findFirst({
+    const horario = await this.prisma.horarioProfissional.findFirst({
       where: {
         empresaId,
         profissionalId: query.profissionalId,
-        diaSemana: dia.getUTCDay(),
+        diaSemana: businessWeekday(query.data),
       },
       include: { intervalos: true },
     });
@@ -99,20 +104,14 @@ export class AgendamentosService {
       return [];
     }
 
-    const fimDia = new Date(dia.getTime() + 24 * 60 * 60 * 1000);
-    const indisponibilidadeDelegate = (this.prisma as unknown as {
-      indisponibilidadeProfissional?: { findMany: (args: unknown) => Promise<any[]> };
-    }).indisponibilidadeProfissional;
-    const indisponibilidades = indisponibilidadeDelegate?.findMany
-      ? await indisponibilidadeDelegate.findMany({
-          where: {
-            empresaId,
-            profissionalId: query.profissionalId,
-            inicio: { lt: fimDia },
-            fim: { gt: dia },
-          },
-        })
-      : [];
+    const indisponibilidades = await this.prisma.indisponibilidadeProfissional.findMany({
+      where: {
+        empresaId,
+        profissionalId: query.profissionalId,
+        inicio: { lt: fimDia },
+        fim: { gt: dia },
+      },
+    });
 
     const agendamentos = await this.prisma.agendamento.findMany({
       where: {
@@ -130,8 +129,8 @@ export class AgendamentosService {
 
     for (let inicioMin = inicioJornada; inicioMin + duracao <= fimJornada; inicioMin += 30) {
       const fimMin = inicioMin + duracao;
-      const inicioSlot = new Date(dia.getTime() + inicioMin * 60_000);
-      const fimSlot = new Date(dia.getTime() + fimMin * 60_000);
+      const inicioSlot = businessDateTime(query.data, formatMinutes(inicioMin));
+      const fimSlot = businessDateTime(query.data, formatMinutes(fimMin));
 
       if (fimSlot <= new Date()) {
         continue;
@@ -178,7 +177,7 @@ export class AgendamentosService {
     await this.empresas.validarEmpresaAtiva(empresaId)
 
     const inicio = new Date(dto.inicio)
-    if (inicio <= new Date()) {
+    if (Number.isNaN(inicio.getTime()) || inicio <= new Date()) {
       throw new BadRequestException('Não é possível agendar numa data antiga')
     }
 
@@ -213,61 +212,46 @@ export class AgendamentosService {
     const duracaoTotal = servicos.reduce((soma, s) => soma + s.duracaoMin, 0)
     const fim = new Date(inicio.getTime() + duracaoTotal * 60_000)
 
-    const horarioDelegate = (this.prisma as unknown as {
-      horarioProfissional?: { findFirst: (args: unknown) => Promise<any> };
-    }).horarioProfissional
+    const dataNegocio = businessDateKey(inicio);
+    const horario = await this.prisma.horarioProfissional.findFirst({
+      where: {
+        empresaId,
+        profissionalId: dto.profissionalId,
+        diaSemana: businessWeekday(dataNegocio),
+      },
+      include: { intervalos: true },
+    });
+    if (!horario) {
+      throw new ConflictException('Profissional não atende neste dia');
+    }
 
-    if (horarioDelegate?.findFirst) {
-      const horario = await horarioDelegate.findFirst({
-        where: {
-          empresaId,
-          profissionalId: dto.profissionalId,
-          diaSemana: inicio.getUTCDay(),
-        },
-        include: { intervalos: true },
-      })
+    const inicioMin = businessMinutes(inicio);
+    const fimMin = businessMinutes(fim);
+    const jornadaInicio = this.horaParaMinutos(horario.inicio);
+    const jornadaFim = this.horaParaMinutos(horario.fim);
 
-      if (!horario) {
-        throw new ConflictException('Profissional não atende neste dia')
-      }
+    if (inicioMin < jornadaInicio || fimMin > jornadaFim) {
+      throw new ConflictException('Agendamento fora do horário de trabalho');
+    }
 
-      const minutos = (data: Date) => data.getUTCHours() * 60 + data.getUTCMinutes()
-      const inicioMin = minutos(inicio)
-      const fimMin = minutos(fim)
-      const jornadaInicio = this.horaParaMinutos(horario.inicio)
-      const jornadaFim = this.horaParaMinutos(horario.fim)
+    const emIntervalo = horario.intervalos.some((intervalo) =>
+      inicioMin < this.horaParaMinutos(intervalo.fim) &&
+      this.horaParaMinutos(intervalo.inicio) < fimMin
+    );
+    if (emIntervalo) {
+      throw new ConflictException('Agendamento coincide com um intervalo');
+    }
 
-      if (inicioMin < jornadaInicio || fimMin > jornadaFim) {
-        throw new ConflictException('Agendamento fora do horário de trabalho')
-      }
-
-      const emIntervalo = horario.intervalos?.some((intervalo: { inicio: string; fim: string }) =>
-        inicioMin < this.horaParaMinutos(intervalo.fim) &&
-        this.horaParaMinutos(intervalo.inicio) < fimMin
-      )
-      if (emIntervalo) {
-        throw new ConflictException('Agendamento coincide com um intervalo')
-      }
-
-      const indisponibilidadeDelegate = (this.prisma as unknown as {
-        indisponibilidadeProfissional?: {
-          findFirst: (args: unknown) => Promise<any>;
-        };
-      }).indisponibilidadeProfissional
-
-      if (indisponibilidadeDelegate?.findFirst) {
-        const indisponibilidade = await indisponibilidadeDelegate.findFirst({
-          where: {
-            empresaId,
-            profissionalId: dto.profissionalId,
-            inicio: { lt: fim },
-            fim: { gt: inicio },
-          },
-        })
-        if (indisponibilidade) {
-          throw new ConflictException('Profissional folgado ou indisponível neste período')
-        }
-      }
+    const indisponibilidade = await this.prisma.indisponibilidadeProfissional.findFirst({
+      where: {
+        empresaId,
+        profissionalId: dto.profissionalId,
+        inicio: { lt: fim },
+        fim: { gt: inicio },
+      },
+    });
+    if (indisponibilidade) {
+      throw new ConflictException('Profissional folgado ou indisponível neste período');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -320,8 +304,9 @@ export class AgendamentosService {
   async findAll(empresaId: number, query: AgendaQueryDto) {
     await this.empresas.validarEmpresaAtiva(empresaId);
 
-    const inicio = query.data ? new Date(`${query.data}T00:00:00.000Z`) : undefined;
-    const fim = inicio ? new Date(inicio.getTime() + 24 * 60 * 60 * 1000) : undefined;
+    const { start: inicio, end: fim } = query.data
+      ? businessDayBounds(query.data)
+      : { start: undefined, end: undefined };
 
     return this.prisma.agendamento.findMany({
       where: {
@@ -402,18 +387,19 @@ export class AgendamentosService {
     if (Number.isNaN(inicio.getTime()) || inicio <= new Date()) {
       throw new BadRequestException('Não é possível agendar numa data antiga');
     }
+    const dataNegocio = businessDateKey(inicio);
     const duracao = servicos.reduce((total: number, servico: any) => total + servico.duracaoMin, 0);
     const fim = new Date(inicio.getTime() + duracao * 60_000);
 
-    const horario = await (this.prisma as any).horarioProfissional?.findFirst({
-      where: { empresaId, profissionalId, diaSemana: inicio.getUTCDay() },
+    const horario = await this.prisma.horarioProfissional.findFirst({
+      where: { empresaId, profissionalId, diaSemana: businessWeekday(dataNegocio) },
       include: { intervalos: true },
     });
     if (!horario) {
       throw new ConflictException('Profissional não atende neste dia');
     }
-    const inicioMin = inicio.getUTCHours() * 60 + inicio.getUTCMinutes();
-    const fimMin = fim.getUTCHours() * 60 + fim.getUTCMinutes();
+    const inicioMin = businessMinutes(inicio);
+    const fimMin = businessMinutes(fim);
     if (inicioMin < this.horaParaMinutos(horario.inicio) ||
       fimMin > this.horaParaMinutos(horario.fim)) {
       throw new ConflictException('Agendamento fora do horário de trabalho');
@@ -433,7 +419,7 @@ export class AgendamentosService {
         );
       }
 
-      const indisponibilidade = await (tx as any).indisponibilidadeProfissional?.findFirst({
+      const indisponibilidade = await tx.indisponibilidadeProfissional.findFirst({
         where: { empresaId, profissionalId, inicio: { lt: fim }, fim: { gt: inicio } },
       });
       if (indisponibilidade) {
@@ -558,10 +544,6 @@ export class AgendamentosService {
     const agendamento = await this.findOne(empresaId, id);
     if (!['AGENDADO', 'PENDENTE'].includes(agendamento.status)) {
       throw new ConflictException('O status do agendamento já foi finalizado');
-    }
-
-    if (dto.status === 'PENDENTE' || dto.status === 'AGENDADO') {
-      throw new ConflictException('O agendamento já está pendente');
     }
 
     const statusInterno =

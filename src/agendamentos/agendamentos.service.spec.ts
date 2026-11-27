@@ -46,7 +46,7 @@ describe('AgendamentosService', () => {
   );
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     prisma.$transaction.mockImplementation(async (callback: (tx: typeof prisma) => unknown) =>
       callback(prisma),
     );
@@ -133,7 +133,7 @@ describe('AgendamentosService', () => {
     );
   });
 
-  it('filters the agenda by company, professional, and UTC date', async () => {
+  it('filters the agenda by company, professional, and São Paulo business date', async () => {
     prisma.agendamento.findMany.mockResolvedValue([]);
 
     await service.findAll(3, { profissionalId: 7, data: '2026-11-26' });
@@ -144,8 +144,8 @@ describe('AgendamentosService', () => {
           empresaId: 3,
           profissionalId: 7,
           inicio: {
-            gte: new Date('2026-11-26T00:00:00.000Z'),
-            lt: new Date('2026-11-27T00:00:00.000Z'),
+            gte: new Date('2026-11-26T03:00:00.000Z'),
+            lt: new Date('2026-11-27T03:00:00.000Z'),
           },
         },
       }),
@@ -204,7 +204,7 @@ describe('AgendamentosService', () => {
       service.create(3, {
         clienteId: 2,
         profissionalId: 7,
-        inicio: '2026-11-30T12:15:00.000Z',
+        inicio: '2026-11-30T15:15:00.000Z',
         servicoIds: [9],
       }),
     ).rejects.toThrow('Agendamento coincide com um intervalo');
@@ -321,8 +321,8 @@ describe('AgendamentosService', () => {
     });
     prisma.agendamento.findMany.mockResolvedValue([
       {
-        inicio: new Date('2027-01-10T09:30:00.000Z'),
-        fim: new Date('2027-01-10T10:30:00.000Z'),
+        inicio: new Date('2027-01-10T12:30:00.000Z'),
+        fim: new Date('2027-01-10T13:30:00.000Z'),
       },
     ]);
 
@@ -375,8 +375,8 @@ describe('AgendamentosService', () => {
     });
     prisma.indisponibilidadeProfissional.findMany.mockResolvedValue([
       {
-        inicio: new Date('2027-01-10T10:00:00.000Z'),
-        fim: new Date('2027-01-10T11:00:00.000Z'),
+        inicio: new Date('2027-01-10T13:00:00.000Z'),
+        fim: new Date('2027-01-10T14:00:00.000Z'),
       },
     ]);
     prisma.agendamento.findMany.mockResolvedValue([]);
@@ -407,8 +407,8 @@ describe('AgendamentosService', () => {
           profissionalId: 7,
           clienteId: 2,
           inicio: {
-            gte: new Date('2027-01-10T00:00:00.000Z'),
-            lt: new Date('2027-01-11T00:00:00.000Z'),
+            gte: new Date('2027-01-10T03:00:00.000Z'),
+            lt: new Date('2027-01-11T03:00:00.000Z'),
           },
         },
       }),
@@ -457,8 +457,8 @@ describe('AgendamentosService', () => {
       })
       .mockResolvedValueOnce({
         id: 13,
-        inicio: new Date('2027-01-10T10:00:00.000Z'),
-        fim: new Date('2027-01-10T11:00:00.000Z'),
+        inicio: new Date('2027-01-10T12:00:00.000Z'),
+        fim: new Date('2027-01-10T13:00:00.000Z'),
       });
     prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
     prisma.profissional.findFirst.mockResolvedValue({
@@ -474,7 +474,7 @@ describe('AgendamentosService', () => {
     prisma.indisponibilidadeProfissional.findFirst.mockResolvedValue(null);
 
     await expect(
-      service.update(3, 12, { inicio: '2027-01-10T10:00:00.000Z' }),
+      service.update(3, 12, { inicio: '2027-01-10T12:00:00.000Z' }),
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(prisma.agendamento.update).not.toHaveBeenCalled();
@@ -508,7 +508,7 @@ describe('AgendamentosService', () => {
     });
 
     await expect(
-      service.atualizarStatus(3, 12, { status: 'CANCELADO' }),
+      service.atualizarStatus(3, 12, { status: 'NAO_COMPARECEU' }),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(prisma.agendamento.update).not.toHaveBeenCalled();
   });

@@ -2,6 +2,10 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { EmpresasService } from '../empresas/empresas.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { PeriodoRelatorioDto } from './dto/periodo-relatorio.dto.js';
+import {
+  businessDayBounds,
+  isValidBusinessDateKey,
+} from '../common/business-time.js';
 
 @Injectable()
 export class RelatoriosService {
@@ -12,19 +16,16 @@ export class RelatoriosService {
 
   async consultar(empresaId: number, periodo: PeriodoRelatorioDto) {
     await this.empresas.validarEmpresaAtiva(empresaId);
-    const inicio = new Date(`${periodo.inicio}T00:00:00.000Z`);
-    const fim = new Date(`${periodo.fim}T00:00:00.000Z`);
     if (
-      Number.isNaN(inicio.getTime()) ||
-      Number.isNaN(fim.getTime()) ||
-      inicio > fim ||
-      inicio.toISOString().slice(0, 10) !== periodo.inicio ||
-      fim.toISOString().slice(0, 10) !== periodo.fim
+      !isValidBusinessDateKey(periodo.inicio) ||
+      !isValidBusinessDateKey(periodo.fim) ||
+      periodo.inicio > periodo.fim
     ) {
       throw new BadRequestException('Período de relatório inválido');
     }
 
-    const fimExclusivo = new Date(fim.getTime() + 24 * 60 * 60 * 1000);
+    const { start: inicio } = businessDayBounds(periodo.inicio);
+    const { end: fimExclusivo } = businessDayBounds(periodo.fim);
     const [agendamentos, pagamentos, cancelamentos] = await Promise.all([
       this.prisma.agendamento.findMany({
         where: {

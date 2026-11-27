@@ -1,7 +1,11 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { ProfissionaisService } from './profissionais.service.js';
 import { EmpresasService } from '../empresas/empresas.service.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import type { PrismaService } from '../prisma/prisma.service.js';
+
+vi.mock('../prisma/prisma.service.js', () => ({
+  PrismaService: class PrismaService {},
+}));
 
 describe('ProfissionaisService', () => {
   const prisma = {
@@ -16,6 +20,7 @@ describe('ProfissionaisService', () => {
       count: vi.fn(),
     },
     horarioProfissional: {
+      deleteMany: vi.fn(),
       findMany: vi.fn(),
       findFirst: vi.fn(),
       upsert: vi.fn(),
@@ -156,6 +161,27 @@ describe('ProfissionaisService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it('rejects malformed schedule times and weekdays before writing', async () => {
+    prisma.profissional.findUnique.mockResolvedValue(profissional);
+
+    await expect(
+      service.definirHorarios(3, 8, {
+        diaSemana: 7,
+        inicio: '09:00',
+        fim: '18:00',
+      }),
+    ).rejects.toThrow('Dia da semana inválido');
+    await expect(
+      service.definirHorarios(3, 8, {
+        diaSemana: 1,
+        inicio: '9:00',
+        fim: '18:00',
+      }),
+    ).rejects.toThrow('Horários inválidos; use HH:mm');
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('rejects intervals outside the work shift', async () => {
     prisma.profissional.findUnique.mockResolvedValue(profissional);
 
@@ -237,5 +263,45 @@ describe('ProfissionaisService', () => {
         },
       }),
     );
+  });
+
+  it('replaces omitted weekdays when saving the complete weekly schedule', async () => {
+    prisma.profissional.findUnique.mockResolvedValue(profissional);
+    prisma.horarioProfissional.findFirst.mockResolvedValue(null);
+    prisma.horarioProfissional.upsert.mockResolvedValue({ id: 21 });
+    prisma.horarioProfissional.findMany.mockResolvedValue([]);
+    prisma.indisponibilidadeProfissional.findMany.mockResolvedValue([]);
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    );
+
+    await service.definirHorarios(3, 8, {
+      horarios: [{ diaSemana: 1, inicio: '09:00', fim: '17:00' }],
+    });
+
+    expect(prisma.horarioProfissional.deleteMany).toHaveBeenCalledWith({
+      where: {
+        empresaId: 3,
+        profissionalId: 8,
+        diaSemana: { notIn: [1] },
+      },
+    });
+    expect(prisma.horarioProfissional.upsert).toHaveBeenCalledOnce();
+  });
+
+  it('allows clearing all weekdays from the weekly schedule', async () => {
+    prisma.profissional.findUnique.mockResolvedValue(profissional);
+    prisma.horarioProfissional.findMany.mockResolvedValue([]);
+    prisma.indisponibilidadeProfissional.findMany.mockResolvedValue([]);
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    );
+
+    await service.definirHorarios(3, 8, { horarios: [] });
+
+    expect(prisma.horarioProfissional.deleteMany).toHaveBeenCalledWith({
+      where: { empresaId: 3, profissionalId: 8 },
+    });
+    expect(prisma.horarioProfissional.upsert).not.toHaveBeenCalled();
   });
 });

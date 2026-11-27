@@ -446,7 +446,7 @@ button { cursor: pointer; }
   font-weight: 600;
 }
 
-.search-field input, .entity-form input, .entity-form textarea, .entity-form select {
+.search-field input, .search-field select, .entity-form input, .entity-form textarea, .entity-form select {
   width: 100%;
   min-height: 42px;
   padding: 9px 11px;
@@ -458,7 +458,7 @@ button { cursor: pointer; }
   font-size: 13px;
 }
 
-.search-field input:focus, .entity-form input:focus, .entity-form textarea:focus, .entity-form select:focus {
+.search-field input:focus, .search-field select:focus, .entity-form input:focus, .entity-form textarea:focus, .entity-form select:focus {
   border-color: var(--gold);
   box-shadow: 0 0 0 3px rgba(201, 164, 75, .1);
 }
@@ -583,6 +583,68 @@ button { cursor: pointer; }
 .agenda-date-form input { min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #101113; color: var(--text); }
 .agenda-results { border-top: 1px solid var(--border); }
 
+.history-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr) repeat(2, minmax(145px, .8fr)) auto;
+  align-items: end;
+  gap: 12px;
+}
+.history-filters select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #101113;
+  color: var(--text);
+}
+.history-table { min-width: 1030px; }
+.history-appointment-dialog { width: min(520px, calc(100vw - 32px)); }
+
+.schedule-editor-form { display: flex; flex-direction: column; gap: 16px; }
+.schedule-days { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.schedule-day {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.schedule-day legend { padding: 0 5px; }
+.schedule-day legend label { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; font-weight: 650; }
+.schedule-day legend input { accent-color: var(--gold); }
+.schedule-day-hours { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.schedule-day-hours label, .schedule-break label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 11px; }
+.schedule-day input[type="time"], .schedule-professional-select {
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+  background: #101113;
+  color: var(--text);
+}
+.schedule-day input:disabled, .schedule-day button:disabled { opacity: .45; }
+.schedule-breaks { display: grid; gap: 8px; margin-top: 10px; }
+.schedule-break { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 8px; }
+.schedule-day > [data-add-break] { margin-top: 10px; }
+.schedule-time-off-card { margin-top: 18px; padding: 0 16px; }
+.schedule-time-off-card .dialog-heading { padding-right: 0; padding-left: 0; }
+.schedule-time-off-card .history-list { padding-bottom: 8px; }
+.schedule-time-off-form { display: grid; grid-template-columns: minmax(130px, .7fr) repeat(2, minmax(190px, 1fr)) auto; align-items: end; gap: 10px; padding-bottom: 14px; }
+.schedule-time-off-form label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 11px; }
+.schedule-time-off-form input, .schedule-time-off-form select {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #101113;
+  color: var(--text);
+}
+.schedule-time-off-form .field-hint { grid-column: 1 / -1; }
+.schedule-time-off-card > .field-error { display: block; padding-bottom: 10px; }
+
 .appointment-filters {
   display: grid;
   grid-template-columns: minmax(170px, 1.4fr) minmax(160px, 1fr) minmax(145px, .8fr) minmax(145px, .8fr) auto;
@@ -606,8 +668,11 @@ button { cursor: pointer; }
 }
 .appointment-filters .search-field { min-width: 0; }
 .appointments-table { min-width: 1050px; }
+.appointments-table .table-actions { white-space: normal; }
+.appointments-table .table-action { margin: 3px 0 3px 4px; }
 .appointment-time-cell { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
 .appointment-cancel-action { color: #e2a2a2; }
+.appointment-complete-action { color: #9bd1a8; }
 .appointment-dialog-form { width: min(660px, calc(100vw - 32px)); }
 .appointment-form { gap: 18px; }
 .appointment-form-section { display: flex; flex-direction: column; gap: 10px; }
@@ -1061,6 +1126,12 @@ button { cursor: pointer; }
   .appointment-filters { grid-template-columns: 1fr 1fr; }
   .appointment-filters .search-field:first-child { grid-column: 1 / -1; }
   .appointment-filters .toolbar-actions { grid-column: 1 / -1; }
+  .history-filters { grid-template-columns: 1fr 1fr; }
+  .history-filters .search-field:first-child, .history-filters .toolbar-actions { grid-column: 1 / -1; }
+  .schedule-days { grid-template-columns: 1fr; }
+  .schedule-time-off-form { grid-template-columns: 1fr 1fr; }
+  .schedule-time-off-form label:first-child, .schedule-time-off-form .field-hint { grid-column: 1 / -1; }
+  .schedule-time-off-card { padding: 0 12px; }
   .payment-filters { grid-template-columns: 1fr 1fr; }
   .payment-filters .toolbar-actions { grid-column: 1 / -1; }
   .notification-card { align-items: flex-start; flex-wrap: wrap; }

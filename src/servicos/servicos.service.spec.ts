@@ -1,7 +1,11 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { ServicosService } from './servicos.service.js';
 import { EmpresasService } from '../empresas/empresas.service.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import type { PrismaService } from '../prisma/prisma.service.js';
+
+vi.mock('../prisma/prisma.service.js', () => ({
+  PrismaService: class PrismaService {},
+}));
 
 describe('ServicosService', () => {
   const prisma = {

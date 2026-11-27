@@ -30,9 +30,20 @@ const sidebar = document.querySelector('#sidebar');
 const backdrop = document.querySelector('#sidebar-backdrop');
 const menuToggle = document.querySelector('#menu-toggle');
 const SELECTED_COMPANY_KEY = 'barbercut:selected-company';
+const BUSINESS_TIME_ZONE = 'America/Sao_Paulo';
+const businessDateTimeFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: BUSINESS_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
 
 let selectedCompany = null;
 let appointmentsLoadSequence = 0;
+let routeRenderSequence = 0;
 let notificationCache = null;
 let notificationRequest = null;
 let notificationCenterItems = [];
@@ -85,11 +96,14 @@ async function apiFetch(path, options = {}) {
     let message = `Erro ${response.status}`;
     try {
       const body = await response.json();
-      message = body.message || message;
+      if (typeof body.message === 'string') message = body.message;
+      else if (Array.isArray(body.message)) message = body.message.join('; ');
     } catch {
       // Keep the status-based message when the response is not JSON.
     }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
 
   return response.json();
@@ -236,14 +250,63 @@ const appointmentStatusLabels = {
   NAO_COMPARECEU: 'Não compareceu',
 };
 
-function localDateKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+function businessDateParts(date) {
+  return Object.fromEntries(
+    businessDateTimeFormatter
+      .formatToParts(date)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)]),
+  );
+}
+
+function businessDateKey(date) {
+  const { year, month, day } = businessDateParts(date);
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function businessDateTime(dateKey, time) {
+  const dateParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  const timeParts = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
+  if (!dateParts || !timeParts) throw new Error('Data ou horário inválido.');
+  const [, yearText, monthText, dayText] = dateParts;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const dateCheck = new Date(Date.UTC(year, month - 1, day));
+  if (
+    dateCheck.getUTCFullYear() !== year ||
+    dateCheck.getUTCMonth() !== month - 1 ||
+    dateCheck.getUTCDate() !== day
+  ) {
+    throw new Error('Data inválida.');
+  }
+  const targetAsUtc = Date.UTC(year, month - 1, day, Number(timeParts[1]), Number(timeParts[2]));
+  let timestamp = targetAsUtc;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = businessDateParts(new Date(timestamp));
+    const representedAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+    const adjustment = targetAsUtc - representedAsUtc;
+    if (adjustment === 0) break;
+    timestamp += adjustment;
+  }
+  return new Date(timestamp);
+}
+
+function businessDayBounds(dateKey) {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!parts) throw new Error('Data inválida.');
+  const nextDate = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]) + 1));
+  return {
+    start: businessDateTime(dateKey, '00:00'),
+    end: businessDateTime(businessDateKey(nextDate), '00:00'),
+  };
 }
 
 function formatDateTime(value, options = {}) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Horário indisponível';
   return date.toLocaleString('pt-BR', {
+    timeZone: BUSINESS_TIME_ZONE,
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
@@ -256,14 +319,14 @@ function formatTime(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? '—'
-    : date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    : date.toLocaleTimeString('pt-BR', { timeZone: BUSINESS_TIME_ZONE, hour: '2-digit', minute: '2-digit' });
 }
 
 function formatAppointmentDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? 'Data indisponível'
-    : date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+    : date.toLocaleDateString('pt-BR', { timeZone: BUSINESS_TIME_ZONE, day: '2-digit', month: 'short' });
 }
 
 function appointmentServiceNames(appointment) {
@@ -325,6 +388,7 @@ async function loadDashboard() {
   const refreshButton = document.querySelector('#refresh-dashboard');
   const now = new Date();
   document.querySelector('#dashboard-date').textContent = now.toLocaleDateString('pt-BR', {
+    timeZone: BUSINESS_TIME_ZONE,
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -340,7 +404,7 @@ async function loadDashboard() {
 
   try {
     const [appointments, notifications] = await Promise.all([
-      apiFetch(`/agendamentos?data=${localDateKey(now)}`),
+      apiFetch(`/agendamentos?data=${businessDateKey(now)}`),
       getNotifications(),
     ]);
 
@@ -424,8 +488,10 @@ async function loadDashboard() {
 }
 
 async function showAppointmentDetails(appointmentId, companyId) {
-  const dialog = document.querySelector('#appointment-dialog');
-  const details = document.querySelector('#appointment-details');
+  const dialog = document.querySelector('#appointment-dialog') ||
+    document.querySelector('#history-appointment-dialog');
+  const details = document.querySelector('#appointment-details') ||
+    document.querySelector('#history-appointment-details');
   if (!dialog || !details) return;
 
   details.innerHTML = '<div class="inline-loading"><span class="spinner" aria-label="Carregando"></span><span>Carregando detalhes...</span></div>';
@@ -456,22 +522,155 @@ async function showAppointmentDetails(appointmentId, companyId) {
   }
 }
 
+let historyLoadSequence = 0;
+
+function historyContent() {
+  return `
+    <div class="page-header">
+      <div><h2>Histórico</h2><p>Consulte atendimentos concluídos e agendamentos cancelados ou não realizados</p></div>
+    </div>
+    <div class="management-toolbar">
+      <form class="history-filters" id="history-filters">
+        <label class="search-field">Cliente
+          <input type="search" name="cliente" placeholder="Pesquisar cliente" autocomplete="off" />
+        </label>
+        <label class="search-field">Situação
+          <select name="status">
+            <option value="">Todas</option>
+            <option value="CONCLUIDO">Concluído</option>
+            <option value="CANCELADO">Cancelado</option>
+            <option value="FALTOU">Não compareceu</option>
+            <option value="NAO_COMPARECEU">Não compareceu</option>
+          </select>
+        </label>
+        <label class="search-field">De
+          <input type="date" name="inicio" />
+        </label>
+        <label class="search-field">Até
+          <input type="date" name="fim" />
+        </label>
+        <div class="toolbar-actions">
+          <button class="action-button" type="submit">Filtrar</button>
+          <button class="secondary-button" type="button" id="clear-history-filters">Limpar</button>
+        </div>
+      </form>
+    </div>
+    <div class="management-error" id="history-error" role="alert" hidden></div>
+    <div class="table-card">
+      <div class="table-scroll">
+        <table class="data-table history-table">
+          <thead><tr><th>Data e horário</th><th>Cliente</th><th>Profissional</th><th>Serviços</th><th>Valor</th><th>Situação</th><th class="actions-column">Ações</th></tr></thead>
+          <tbody id="history-table-body"><tr><td colspan="7"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando histórico...</span></div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <dialog class="appointment-dialog history-appointment-dialog" id="history-appointment-dialog" aria-labelledby="history-appointment-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Histórico</span><h2 id="history-appointment-title">Detalhes do atendimento</h2></div>
+        <button class="dialog-close" type="button" data-close-history-appointment aria-label="Fechar">&times;</button>
+      </div>
+      <div class="appointment-details" id="history-appointment-details"></div>
+    </dialog>
+  `;
+}
+
+function initHistoryPage() {
+  const body = document.querySelector('#history-table-body');
+  if (!body) return;
+  const dialog = document.querySelector('#history-appointment-dialog');
+  document.querySelector('#history-filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    loadAppointmentHistory();
+  });
+  document.querySelector('#clear-history-filters').addEventListener('click', () => {
+    document.querySelector('#history-filters').reset();
+    loadAppointmentHistory();
+  });
+  document.querySelector('[data-close-history-appointment]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  body.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-history-appointment-id]');
+    if (button) showAppointmentDetails(button.dataset.historyAppointmentId, selectedCompany?.id);
+  });
+  loadAppointmentHistory();
+}
+
+async function loadAppointmentHistory() {
+  const body = document.querySelector('#history-table-body');
+  const errorBox = document.querySelector('#history-error');
+  const filters = document.querySelector('#history-filters');
+  const companyId = selectedCompany?.id;
+  if (!body || !filters || !companyId) return;
+  const sequence = ++historyLoadSequence;
+  const search = filters.elements.cliente.value.trim().toLocaleLowerCase('pt-BR');
+  const status = filters.elements.status.value;
+  const start = filters.elements.inicio.value;
+  const end = filters.elements.fim.value;
+  errorBox.hidden = true;
+  body.innerHTML = '<tr><td colspan="7"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando histórico...</span></div></td></tr>';
+  if (start && end && start > end) {
+    body.innerHTML = '<tr><td colspan="7"><div class="table-state">Informe um período válido.</div></td></tr>';
+    errorBox.textContent = 'A data inicial não pode ser posterior à data final.';
+    errorBox.hidden = false;
+    return;
+  }
+
+  try {
+    const [completed, cancellations] = await Promise.all([
+      apiFetch('/agendamentos/concluidos'),
+      apiFetch('/agendamentos/cancelamentos'),
+    ]);
+    if (!Array.isArray(completed) || !Array.isArray(cancellations)) {
+      throw new Error('A API retornou um histórico inválido.');
+    }
+    if (selectedCompany?.id !== companyId || !body.isConnected || sequence !== historyLoadSequence) return;
+    const appointments = [...completed, ...cancellations]
+      .filter((appointment) => {
+        const clientName = String(appointment.cliente?.nome || '').toLocaleLowerCase('pt-BR');
+        const date = new Date(appointment.inicio);
+        const dateKey = Number.isNaN(date.getTime()) ? '' : businessDateKey(date);
+        return (!search || clientName.includes(search)) &&
+          (!status || appointment.status === status) &&
+          (!start || dateKey >= start) &&
+          (!end || dateKey <= end);
+      })
+      .sort((a, b) => new Date(b.inicio) - new Date(a.inicio));
+
+    body.innerHTML = appointments.length
+      ? appointments.map((appointment) => `
+        <tr>
+          <td><strong class="table-primary">${escapeHtml(agendaWallDate(appointment.inicio))}</strong><small class="appointment-time-cell">${escapeHtml(agendaWallTime(appointment.inicio))}</small></td>
+          <td>${escapeHtml(appointment.cliente?.nome || 'Cliente não informado')}</td>
+          <td>${escapeHtml(appointment.profissional?.nome || '—')}</td>
+          <td>${escapeHtml(appointmentServiceNames(appointment) || '—')}</td>
+          <td>${escapeHtml(formatCurrency(appointmentPrice(appointment)))}</td>
+          <td><span class="status-badge status-${escapeHtml(String(appointment.status).toLowerCase())}">${escapeHtml(appointmentStatusLabels[appointment.status] || appointment.status)}</span></td>
+          <td class="table-actions"><button class="table-action" type="button" data-history-appointment-id="${appointment.id}">Detalhes</button></td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="7"><div class="table-state"><strong>Nenhum registro encontrado</strong><span>Não há atendimentos com os filtros selecionados.</span></div></td></tr>';
+  } catch (error) {
+    if (selectedCompany?.id !== companyId || !body.isConnected || sequence !== historyLoadSequence) return;
+    body.innerHTML = '<tr><td colspan="7"><div class="table-state">O histórico não está disponível.</div></td></tr>';
+    errorBox.innerHTML = `<span>Não foi possível carregar o histórico: ${escapeHtml(error.message)}</span><button class="secondary-button" type="button" id="retry-history">Tentar novamente</button>`;
+    errorBox.hidden = false;
+    document.querySelector('#retry-history').addEventListener('click', loadAppointmentHistory);
+  }
+}
+
 function pageContent(page) {
   if (page.id === 'dashboard') return dashboardContent();
   if (page.id === 'clientes') return clientsContent();
   if (page.id === 'profissionais') return professionalsContent();
   if (page.id === 'servicos') return servicesContent();
   if (page.id === 'agendamentos') return appointmentsContent();
+  if (page.id === 'horarios') return schedulesContent();
+  if (page.id === 'historico') return historyContent();
   if (page.id === 'pagamentos') return paymentsContent();
   if (page.id === 'notificacoes') return notificationsContent();
   if (page.id === 'relatorios') return reportsContent();
-
-  const actionLabels = {
-    agendamentos: 'Novo agendamento',
-  };
-  const action = actionLabels[page.id]
-    ? `<button class="action-button" type="button" aria-label="${actionLabels[page.id]}">${actionLabels[page.id]}</button>`
-    : '';
 
   return `
     <div class="page-header">
@@ -479,7 +678,6 @@ function pageContent(page) {
         <h2>${page.title}</h2>
         <p>${page.subtitle}</p>
       </div>
-      ${action}
     </div>
     <article class="card card-empty">
       <div>
@@ -505,7 +703,7 @@ function appointmentsContent() {
           <select name="profissional"><option value="">Todos os profissionais</option></select>
         </label>
         <label class="search-field">Data
-          <input type="date" name="data" value="${localDateKey(new Date())}" />
+          <input type="date" name="data" value="${businessDateKey(new Date())}" />
         </label>
         <label class="search-field">Situação
           <select name="status">
@@ -546,14 +744,14 @@ function agendaWallDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? 'Data indisponível'
-    : date.toLocaleDateString('pt-BR', { timeZone: 'UTC', day: '2-digit', month: 'short', year: 'numeric' });
+    : date.toLocaleDateString('pt-BR', { timeZone: BUSINESS_TIME_ZONE, day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function agendaWallTime(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? '—'
-    : date.toLocaleTimeString('pt-BR', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' });
+    : date.toLocaleTimeString('pt-BR', { timeZone: BUSINESS_TIME_ZONE, hour: '2-digit', minute: '2-digit' });
 }
 
 function appointmentPrice(appointment) {
@@ -585,6 +783,8 @@ function initAppointmentsPage() {
     const appointmentId = Number(button.dataset.appointmentId);
     if (button.dataset.appointmentAction === 'edit') openAppointmentForm({ id: appointmentId });
     if (button.dataset.appointmentAction === 'cancel') cancelAppointment(appointmentId);
+    if (button.dataset.appointmentAction === 'complete') updateAppointmentStatus(appointmentId, 'CONCLUIDO');
+    if (button.dataset.appointmentAction === 'no-show') updateAppointmentStatus(appointmentId, 'NAO_COMPARECEU');
   });
   loadAppointmentProfessionals();
   loadAppointments();
@@ -643,7 +843,7 @@ async function loadAppointments() {
           <td>${escapeHtml(formatCurrency(appointmentPrice(appointment)))}</td>
           <td><span class="status-badge status-${escapeHtml(String(appointment.status).toLowerCase())}">${escapeHtml(appointmentStatusLabels[appointment.status] || appointment.status)}</span></td>
           <td class="table-actions">${editable
-            ? `<button class="table-action" type="button" data-appointment-action="edit" data-appointment-id="${appointment.id}">Editar</button><button class="table-action appointment-cancel-action" type="button" data-appointment-action="cancel" data-appointment-id="${appointment.id}">Cancelar</button>`
+            ? `<button class="table-action" type="button" data-appointment-action="edit" data-appointment-id="${appointment.id}">Editar</button><button class="table-action appointment-complete-action" type="button" data-appointment-action="complete" data-appointment-id="${appointment.id}">Concluir</button><button class="table-action" type="button" data-appointment-action="no-show" data-appointment-id="${appointment.id}">Não compareceu</button><button class="table-action appointment-cancel-action" type="button" data-appointment-action="cancel" data-appointment-id="${appointment.id}">Cancelar</button>`
             : '—'}</td>
         </tr>`;
       }).join('')
@@ -686,8 +886,8 @@ function renderAppointmentForm({ appointment, professionals, services, companyId
   const initialServiceId = appointment?.servicos?.[0]?.servico?.id || '';
   const initialClient = appointment?.cliente || null;
   const initialDate = appointment?.inicio
-    ? new Date(appointment.inicio).toISOString().slice(0, 10)
-    : localDateKey(new Date());
+    ? businessDateKey(new Date(appointment.inicio))
+    : businessDateKey(new Date());
   const initialTime = appointment?.inicio ? agendaWallTime(appointment.inicio) : '';
   content.innerHTML = `
     <form class="entity-form appointment-form" id="appointment-form" novalidate>
@@ -715,7 +915,7 @@ function renderAppointmentForm({ appointment, professionals, services, companyId
           <select name="servicoId" required><option value="">Selecione</option>${services.map((service) => `<option value="${service.id}" ${Number(initialServiceId) === service.id ? 'selected' : ''}>${escapeHtml(service.nome)}</option>`).join('')}</select>
         </label>
         <label>Data
-          <input name="data" type="date" required min="${localDateKey(new Date())}" value="${escapeHtml(initialDate)}" />
+          <input name="data" type="date" required min="${businessDateKey(new Date())}" value="${escapeHtml(initialDate)}" />
         </label>
         <div class="appointment-service-summary" id="appointment-service-summary">Selecione um serviço para consultar preço e duração.</div>
       </div>
@@ -876,7 +1076,7 @@ function renderAppointmentForm({ appointment, professionals, services, companyId
       const isUnchangedCurrentSlot = appointment &&
         Number(appointment.profissionalId) === professionalId &&
         Number(appointment.servicos?.[0]?.servico?.id) === serviceId &&
-        new Date(appointment.inicio).toISOString().slice(0, 10) === date;
+        businessDateKey(new Date(appointment.inicio)) === date;
       const currentTime = isUnchangedCurrentSlot ? agendaWallTime(appointment.inicio) : '';
       const choices = [...new Set([...available, ...(currentTime && !available.includes(currentTime) ? [currentTime] : [])])].sort();
       checkedAvailabilityKey = requestKey;
@@ -926,7 +1126,7 @@ function renderAppointmentForm({ appointment, professionals, services, companyId
       const isCurrentSlot = appointment &&
         Number(appointment.profissionalId) === Number(form.elements.profissionalId.value) &&
         Number(appointment.servicos?.[0]?.servico?.id) === Number(form.elements.servicoId.value) &&
-        new Date(appointment.inicio).toISOString().slice(0, 10) === form.elements.data.value &&
+        businessDateKey(new Date(appointment.inicio)) === form.elements.data.value &&
         agendaWallTime(appointment.inicio) === selectedTime;
       if (!available.includes(selectedTime) && !isCurrentSlot) {
         throw new Error('Este horário acabou de ficar ocupado. Consulte novamente para escolher outro.');
@@ -934,7 +1134,7 @@ function renderAppointmentForm({ appointment, professionals, services, companyId
       const payload = {
         clienteId: Number(selectedClient.id),
         profissionalId: Number(form.elements.profissionalId.value),
-        inicio: `${form.elements.data.value}T${selectedTime}:00.000Z`,
+        inicio: businessDateTime(form.elements.data.value, selectedTime).toISOString(),
         ...(appointment && Number(form.elements.servicoId.value) === Number(initialServiceId)
           ? {}
           : { servicoIds: [Number(form.elements.servicoId.value)] }),
@@ -974,6 +1174,28 @@ async function cancelAppointment(appointmentId) {
     await loadAppointments();
   } catch (error) {
     showToast(`Não foi possível cancelar o agendamento: ${error.message}`, 'error');
+  }
+}
+
+async function updateAppointmentStatus(appointmentId, status) {
+  const completed = status === 'CONCLUIDO';
+  const confirmed = await confirmAction(
+    completed ? 'Concluir atendimento' : 'Registrar não comparecimento',
+    completed
+      ? 'Confirma que este atendimento foi realizado? Após concluir, será possível registrar o pagamento.'
+      : 'Confirma que o cliente não compareceu ao atendimento?',
+  );
+  if (!confirmed) return;
+  try {
+    await apiFetch(`/agendamentos/${appointmentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    showToast(completed ? 'Atendimento concluído.' : 'Não comparecimento registrado.');
+    await loadAppointments();
+  } catch (error) {
+    showToast(`Não foi possível atualizar o agendamento: ${error.message}`, 'error');
   }
 }
 
@@ -1047,7 +1269,7 @@ function paymentsContent() {
 
 function paymentDateKey(payment) {
   const date = new Date(payment.registradoEm || payment.criadoEm);
-  return Number.isNaN(date.getTime()) ? '' : localDateKey(date);
+  return Number.isNaN(date.getTime()) ? '' : businessDateKey(date);
 }
 
 function initPaymentsPage() {
@@ -1096,9 +1318,11 @@ async function loadPayments() {
       : '/pagamentos';
 
   if (status === 'REALIZADO' && date) {
-    const start = new Date(`${date}T00:00:00`);
-    const end = new Date(`${date}T23:59:59.999`);
-    const params = new URLSearchParams({ inicio: start.toISOString(), fim: end.toISOString() });
+    const { start, end } = businessDayBounds(date);
+    const params = new URLSearchParams({
+      inicio: start.toISOString(),
+      fim: new Date(end.getTime() - 1).toISOString(),
+    });
     endpoint = `/pagamentos/periodo?${params.toString()}`;
   }
 
@@ -1498,7 +1722,8 @@ let reportsLoadSequence = 0;
 
 function reportsContent() {
   const today = new Date();
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const { year, month } = businessDateParts(today);
+  const monthStart = new Date(Date.UTC(year, month - 1, 1, 12));
   return `
     <div class="page-header">
       <div><h2>Relatórios</h2><p>Indicadores da empresa no período selecionado</p></div>
@@ -1507,10 +1732,10 @@ function reportsContent() {
     <div class="management-toolbar">
       <form class="report-filters" id="report-filters">
         <label class="search-field">De
-          <input type="date" name="inicio" required value="${localDateKey(monthStart)}" />
+          <input type="date" name="inicio" required value="${businessDateKey(monthStart)}" />
         </label>
         <label class="search-field">Até
-          <input type="date" name="fim" required value="${localDateKey(today)}" />
+          <input type="date" name="fim" required value="${businessDateKey(today)}" />
         </label>
         <div class="toolbar-actions">
           <button class="action-button" type="submit">Consultar período</button>
@@ -1548,16 +1773,17 @@ function initReportsPage() {
   document.querySelector('#refresh-reports').addEventListener('click', loadReports);
   document.querySelectorAll('[data-report-days]').forEach((button) => {
     button.addEventListener('click', () => {
-      const end = new Date();
+      const endParts = businessDateKey(new Date()).split('-').map(Number);
+      const end = new Date(Date.UTC(endParts[0], endParts[1] - 1, endParts[2], 12));
       const range = button.dataset.reportDays;
       const start = new Date(end);
       if (range === 'month') {
-        start.setDate(1);
+        start.setUTCDate(1);
       } else {
-        start.setDate(start.getDate() - Math.max(0, Number(range) - 1));
+        start.setUTCDate(start.getUTCDate() - Math.max(0, Number(range) - 1));
       }
-      form.elements.inicio.value = localDateKey(start);
-      form.elements.fim.value = localDateKey(end);
+      form.elements.inicio.value = businessDateKey(start);
+      form.elements.fim.value = businessDateKey(end);
       loadReports();
     });
   });
@@ -1651,7 +1877,7 @@ async function loadReports() {
       report.pagamentos.quantidade > 0 ||
       report.servicosMaisRealizados.length > 0 ||
       report.profissionaisComMaisAtendimentos.length > 0;
-    periodLabel.textContent = `Período: ${formatDate(`${inicio}T00:00:00`)} a ${formatDate(`${fim}T00:00:00`)}`;
+    periodLabel.textContent = `Período: ${formatDate(inicio)} a ${formatDate(fim)}`;
     indicators.innerHTML = `
       <article class="card report-indicator">
         <h3>Atendimentos</h3>
@@ -1801,8 +2027,12 @@ function formatPhone(phone) {
 }
 
 function formatDate(value) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('pt-BR');
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value))
+    ? new Date(`${value}T12:00:00.000Z`)
+    : new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleDateString('pt-BR', { timeZone: BUSINESS_TIME_ZONE });
 }
 
 function initClientsPage() {
@@ -2266,7 +2496,7 @@ async function showProfessionalAgenda(professionalId) {
     content.innerHTML = `
       <div class="agenda-schedule"><strong>Jornada semanal</strong><span>${escapeHtml(formatWorkSchedule(journey.horarios))}</span></div>
       <form class="agenda-date-form" id="professional-agenda-form">
-        <label>Data da agenda<input type="date" name="data" required value="${localDateKey(new Date())}" /></label>
+        <label>Data da agenda<input type="date" name="data" required value="${businessDateKey(new Date())}" /></label>
         <button class="action-button" type="submit">Consultar agenda</button>
       </form>
       <div id="professional-agenda-results" class="agenda-results"></div>
@@ -2302,6 +2532,296 @@ async function loadProfessionalAgenda(professionalId, date) {
   } catch (error) {
     results.innerHTML = `<p class="form-error">Não foi possível carregar os agendamentos: ${escapeHtml(error.message)}</p>`;
   }
+}
+
+const scheduleWeekDays = [
+  'Domingo',
+  'Segunda-feira',
+  'Terça-feira',
+  'Quarta-feira',
+  'Quinta-feira',
+  'Sexta-feira',
+  'Sábado',
+];
+let scheduleLoadSequence = 0;
+
+function schedulesContent() {
+  return `
+    <div class="page-header">
+      <div><h2>Horários</h2><p>Configure a jornada semanal e os intervalos de cada profissional</p></div>
+    </div>
+    <div class="management-toolbar">
+      <label class="search-field">Profissional
+        <select class="schedule-professional-select" id="schedule-professional-select"><option value="">Carregando profissionais...</option></select>
+      </label>
+    </div>
+    <div class="management-error" id="schedule-error" role="alert" hidden></div>
+    <div id="schedule-editor">
+      <div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando profissionais...</span></div>
+    </div>
+    <div class="table-card schedule-time-off-card" id="schedule-time-off"></div>
+  `;
+}
+
+function initSchedulesPage() {
+  const select = document.querySelector('#schedule-professional-select');
+  if (!select) return;
+  select.addEventListener('change', () => loadProfessionalSchedule(select.value));
+  loadScheduleProfessionals();
+}
+
+async function loadScheduleProfessionals() {
+  const select = document.querySelector('#schedule-professional-select');
+  const editor = document.querySelector('#schedule-editor');
+  const errorBox = document.querySelector('#schedule-error');
+  const companyId = selectedCompany?.id;
+  if (!select || !editor || !companyId) return;
+  errorBox.hidden = true;
+
+  try {
+    const professionals = await apiFetch('/profissionais');
+    if (!Array.isArray(professionals)) throw new Error('A API retornou uma lista de profissionais inválida.');
+    if (selectedCompany?.id !== companyId || !select.isConnected) return;
+    if (!professionals.length) {
+      select.innerHTML = '<option value="">Nenhum profissional cadastrado</option>';
+      select.disabled = true;
+      editor.innerHTML = '<div class="table-state"><strong>Cadastre um profissional para configurar horários.</strong></div>';
+      document.querySelector('#schedule-time-off').innerHTML = '';
+      return;
+    }
+
+    select.disabled = false;
+    select.innerHTML = professionals.map((professional) =>
+      `<option value="${professional.id}">${escapeHtml(professional.nome)}${professional.ativo ? '' : ' (inativo)'}</option>`,
+    ).join('');
+    await loadProfessionalSchedule(select.value);
+  } catch (error) {
+    if (selectedCompany?.id !== companyId || !editor.isConnected) return;
+    editor.innerHTML = '';
+    errorBox.innerHTML = `<span>Não foi possível carregar os profissionais: ${escapeHtml(error.message)}</span><button class="secondary-button" type="button" id="retry-schedule-professionals">Tentar novamente</button>`;
+    errorBox.hidden = false;
+    document.querySelector('#retry-schedule-professionals').addEventListener('click', loadScheduleProfessionals);
+  }
+}
+
+function scheduleBreakMarkup(interval = {}) {
+  return `
+    <div class="schedule-break">
+      <label>Intervalo de<input type="time" data-break-start value="${escapeHtml(interval.inicio || '')}" /></label>
+      <label>Até<input type="time" data-break-end value="${escapeHtml(interval.fim || '')}" /></label>
+      <button class="table-action" type="button" data-remove-break>Remover</button>
+    </div>
+  `;
+}
+
+async function loadProfessionalSchedule(professionalId) {
+  const editor = document.querySelector('#schedule-editor');
+  const errorBox = document.querySelector('#schedule-error');
+  const timeOff = document.querySelector('#schedule-time-off');
+  const companyId = selectedCompany?.id;
+  if (!editor || !professionalId || !companyId) {
+    if (editor) editor.innerHTML = '<div class="table-state">Selecione um profissional.</div>';
+    if (timeOff) timeOff.innerHTML = '';
+    return;
+  }
+  const sequence = ++scheduleLoadSequence;
+  errorBox.hidden = true;
+  editor.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando jornada...</span></div>';
+  timeOff.innerHTML = '';
+
+  try {
+    const journey = await apiFetch(`/profissionais/${professionalId}/jornada`);
+    if (selectedCompany?.id !== companyId || !editor.isConnected || sequence !== scheduleLoadSequence) return;
+    renderScheduleEditor(professionalId, journey, companyId);
+  } catch (error) {
+    if (selectedCompany?.id !== companyId || !editor.isConnected || sequence !== scheduleLoadSequence) return;
+    editor.innerHTML = '';
+    errorBox.innerHTML = `<span>Não foi possível carregar a jornada: ${escapeHtml(error.message)}</span><button class="secondary-button" type="button" id="retry-professional-schedule">Tentar novamente</button>`;
+    errorBox.hidden = false;
+    document.querySelector('#retry-professional-schedule').addEventListener('click', () => loadProfessionalSchedule(professionalId));
+  }
+}
+
+function renderScheduleEditor(professionalId, journey, companyId) {
+  const editor = document.querySelector('#schedule-editor');
+  const errorBox = document.querySelector('#schedule-error');
+  const timeOff = document.querySelector('#schedule-time-off');
+  const schedules = new Map((journey.horarios || []).map((item) => [item.diaSemana, item]));
+  editor.innerHTML = `
+    <form class="schedule-editor-form" id="schedule-editor-form">
+      <div class="schedule-days">
+        ${scheduleWeekDays.map((dayName, dayIndex) => {
+          const current = schedules.get(dayIndex);
+          const intervals = (current?.intervalos || []).map(scheduleBreakMarkup).join('');
+          return `
+            <fieldset class="schedule-day" data-schedule-day="${dayIndex}">
+              <legend><label><input type="checkbox" data-day-enabled ${current ? 'checked' : ''} /><span>${dayName}</span></label></legend>
+              <div class="schedule-day-hours">
+                <label>Início<input type="time" data-day-start value="${escapeHtml(current?.inicio || '')}" /></label>
+                <label>Término<input type="time" data-day-end value="${escapeHtml(current?.fim || '')}" /></label>
+              </div>
+              <div class="schedule-breaks" data-breaks>${intervals}</div>
+              <button class="table-action" type="button" data-add-break>+ Intervalo</button>
+            </fieldset>
+          `;
+        }).join('')}
+      </div>
+      <div class="dialog-actions">
+        <button class="action-button" type="submit">Salvar jornada semanal</button>
+      </div>
+      <small class="field-hint">Os horários e intervalos são validados pela API antes de serem salvos.</small>
+    </form>
+  `;
+  const form = editor.querySelector('#schedule-editor-form');
+  const dayFields = [...form.querySelectorAll('[data-schedule-day]')];
+  const setDayEnabled = (dayField) => {
+    const enabled = dayField.querySelector('[data-day-enabled]').checked;
+    dayField.querySelectorAll('[data-day-start], [data-day-end], [data-break-start], [data-break-end], [data-add-break], [data-remove-break]')
+      .forEach((input) => { input.disabled = !enabled; });
+  };
+  dayFields.forEach((dayField) => {
+    setDayEnabled(dayField);
+    dayField.querySelector('[data-day-enabled]').addEventListener('change', () => setDayEnabled(dayField));
+    dayField.querySelector('[data-add-break]').addEventListener('click', () => {
+      dayField.querySelector('[data-breaks]').insertAdjacentHTML('beforeend', scheduleBreakMarkup());
+      setDayEnabled(dayField);
+    });
+    dayField.querySelector('[data-breaks]').addEventListener('click', (event) => {
+      const removeButton = event.target.closest('[data-remove-break]');
+      if (removeButton) removeButton.closest('.schedule-break').remove();
+    });
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    errorBox.hidden = true;
+    const horarios = [];
+    for (const dayField of dayFields) {
+      if (!dayField.querySelector('[data-day-enabled]').checked) continue;
+      const inicio = dayField.querySelector('[data-day-start]').value;
+      const fim = dayField.querySelector('[data-day-end]').value;
+      if (!inicio || !fim) {
+        errorBox.textContent = `Informe o início e o término de ${scheduleWeekDays[Number(dayField.dataset.scheduleDay)]}.`;
+        errorBox.hidden = false;
+        return;
+      }
+      const intervalos = [];
+      for (const breakField of dayField.querySelectorAll('.schedule-break')) {
+        const breakStart = breakField.querySelector('[data-break-start]').value;
+        const breakEnd = breakField.querySelector('[data-break-end]').value;
+        if (!breakStart || !breakEnd) {
+          errorBox.textContent = `Complete os dois horários de intervalo em ${scheduleWeekDays[Number(dayField.dataset.scheduleDay)]}.`;
+          errorBox.hidden = false;
+          return;
+        }
+        intervalos.push({ inicio: breakStart, fim: breakEnd });
+      }
+      horarios.push({
+        diaSemana: Number(dayField.dataset.scheduleDay),
+        inicio,
+        fim,
+        intervalos,
+      });
+    }
+
+    if (!horarios.length) {
+      const confirmed = await confirmAction(
+        'Remover jornada semanal',
+        'Nenhum dia foi selecionado. A agenda deste profissional ficará sem horários de atendimento.',
+      );
+      if (!confirmed) return;
+    }
+
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await apiFetch(`/profissionais/${professionalId}/horarios`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ horarios }),
+      });
+      if (selectedCompany?.id !== companyId) return;
+      showToast('Jornada semanal salva.');
+      await loadProfessionalSchedule(professionalId);
+    } catch (error) {
+      errorBox.textContent = `Não foi possível salvar a jornada: ${error.message}`;
+      errorBox.hidden = false;
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
+
+  const unavailable = journey.indisponibilidades || [];
+  timeOff.innerHTML = `
+    <div class="dialog-heading"><div><span class="topbar-label">Agenda profissional</span><h2>Folgas e indisponibilidades</h2></div></div>
+    <form class="schedule-time-off-form" id="schedule-time-off-form">
+      <label>Tipo
+        <select name="tipo">
+          <option value="FOLGA">Folga</option>
+          <option value="INDISPONIBILIDADE">Indisponibilidade</option>
+        </select>
+      </label>
+      <label>Início
+        <input type="datetime-local" name="inicio" required />
+      </label>
+      <label>Fim
+        <input type="datetime-local" name="fim" required />
+      </label>
+      <button class="action-button" type="submit">Registrar período</button>
+      <small class="field-hint">Os horários são considerados no fuso de São Paulo.</small>
+    </form>
+    <div class="field-error" id="schedule-time-off-error" role="alert"></div>
+    ${unavailable.length
+      ? `<div class="history-list">${unavailable.map((item) => `
+          <article class="history-item">
+            <div><strong>${escapeHtml(item.tipo === 'FOLGA' ? 'Folga' : 'Indisponibilidade')}</strong><span>${escapeHtml(formatDateTime(item.inicio))} – ${escapeHtml(formatDateTime(item.fim))}</span></div>
+          </article>
+        `).join('')}</div>`
+      : '<div class="table-state">Nenhuma folga ou indisponibilidade futura registrada.</div>'}
+  `;
+  const timeOffForm = timeOff.querySelector('#schedule-time-off-form');
+  timeOffForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(timeOffForm);
+    const startValue = String(formData.get('inicio') || '');
+    const endValue = String(formData.get('fim') || '');
+    const error = timeOff.querySelector('#schedule-time-off-error');
+    error.textContent = '';
+    const toBusinessInstant = (value) => {
+      const [date, time] = value.split('T');
+      return businessDateTime(date, time);
+    };
+    let inicio;
+    let fim;
+    try {
+      inicio = toBusinessInstant(startValue);
+      fim = toBusinessInstant(endValue);
+    } catch (requestError) {
+      error.textContent = requestError.message;
+      return;
+    }
+    if (inicio >= fim) {
+      error.textContent = 'O fim deve ser posterior ao início.';
+      return;
+    }
+    const submit = timeOffForm.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const tipo = String(formData.get('tipo'));
+      await apiFetch(`/profissionais/${professionalId}/${tipo === 'FOLGA' ? 'folgas' : 'indisponibilidades'}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo, inicio: inicio.toISOString(), fim: fim.toISOString() }),
+      });
+      if (selectedCompany?.id !== companyId) return;
+      showToast(tipo === 'FOLGA' ? 'Folga registrada.' : 'Indisponibilidade registrada.');
+      await loadProfessionalSchedule(professionalId);
+    } catch (requestError) {
+      error.textContent = `Não foi possível registrar o período: ${requestError.message}`;
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
 }
 
 function servicesContent() {
@@ -2658,6 +3178,7 @@ function closeMenu() {
 }
 
 async function renderRoute() {
+  const renderSequence = ++routeRenderSequence;
   const route = window.location.hash.replace(/^#\/?/, '') || 'dashboard';
 
   if (!selectedCompany && route !== 'empresas') {
@@ -2675,7 +3196,9 @@ async function renderRoute() {
   }
 
   try {
-    const company = await apiFetch(`/empresas/${selectedCompany.id}`);
+    const companyId = selectedCompany.id;
+    const company = await apiFetch(`/empresas/${companyId}`);
+    if (renderSequence !== routeRenderSequence || selectedCompany?.id !== companyId) return;
     if (company.ativa === false) {
       updateSelectedCompany(null);
       window.location.hash = '/empresas';
@@ -2683,11 +3206,23 @@ async function renderRoute() {
     }
     updateSelectedCompany(company);
   } catch (error) {
-    updateSelectedCompany(null);
-    window.location.hash = '/empresas';
+    if (renderSequence !== routeRenderSequence) return;
+    if (error.status === 404) {
+      updateSelectedCompany(null);
+      window.location.hash = '/empresas';
+      return;
+    }
+    content.innerHTML = `
+      <div class="page-header">
+        <div><h2>Não foi possível validar a empresa</h2><p class="form-error" role="alert">${escapeHtml(error.message)}</p></div>
+        <button class="secondary-button" type="button" id="retry-company-validation">Tentar novamente</button>
+      </div>
+    `;
+    document.querySelector('#retry-company-validation').addEventListener('click', renderRoute);
     return;
   }
 
+  if (renderSequence !== routeRenderSequence) return;
   updateNotificationBell();
   document.body.classList.remove('company-selection-mode');
   const page = pages.find((item) => item.id === route) || pages[0];
@@ -2710,6 +3245,8 @@ async function renderRoute() {
   if (page.id === 'profissionais') initProfessionalsPage();
   if (page.id === 'servicos') initServicesPage();
   if (page.id === 'agendamentos') initAppointmentsPage();
+  if (page.id === 'horarios') initSchedulesPage();
+  if (page.id === 'historico') initHistoryPage();
   if (page.id === 'pagamentos') initPaymentsPage();
   if (page.id === 'notificacoes') initNotificationsPage();
   if (page.id === 'relatorios') initReportsPage();

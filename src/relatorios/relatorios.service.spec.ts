@@ -57,8 +57,8 @@ describe('RelatoriosService', () => {
         where: {
           empresaId: 3,
           inicio: {
-            gte: new Date('2026-11-01T00:00:00.000Z'),
-            lt: new Date('2026-12-01T00:00:00.000Z'),
+            gte: new Date('2026-11-01T03:00:00.000Z'),
+            lt: new Date('2026-12-01T03:00:00.000Z'),
           },
         },
       }),

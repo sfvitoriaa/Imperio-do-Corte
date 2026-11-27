@@ -109,17 +109,23 @@ export class ProfissionaisService {
       ? (dto as DefinirHorariosProfissionalDto).horarios
       : [dto as HorarioProfissionalDto];
 
-    if (horarios.length === 0) {
-      throw new BadRequestException('Informe ao menos um dia de trabalho');
-    }
-
+    const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
     const dias = new Set<number>();
     for (const horario of horarios) {
+      if (!horario || typeof horario !== 'object') {
+        throw new BadRequestException('Horário de trabalho inválido');
+      }
+      if (!Number.isInteger(horario.diaSemana) || horario.diaSemana < 0 || horario.diaSemana > 6) {
+        throw new BadRequestException('Dia da semana inválido');
+      }
       if (dias.has(horario.diaSemana)) {
         throw new BadRequestException('Não é permitido cadastrar o mesmo dia duas vezes');
       }
       dias.add(horario.diaSemana);
 
+      if (!timePattern.test(horario.inicio) || !timePattern.test(horario.fim)) {
+        throw new BadRequestException('Horários inválidos; use HH:mm');
+      }
       const inicio = timeToMinutes(horario.inicio);
       const fim = timeToMinutes(horario.fim);
       if (inicio >= fim) {
@@ -127,6 +133,12 @@ export class ProfissionaisService {
       }
 
       const intervalos = horario.intervalos ?? [];
+      if (!Array.isArray(intervalos) || intervalos.some((intervalo) =>
+        !intervalo || typeof intervalo !== 'object' ||
+        !timePattern.test(intervalo.inicio) || !timePattern.test(intervalo.fim),
+      )) {
+        throw new BadRequestException('Intervalos inválidos; use HH:mm');
+      }
       const ordenados = intervalos
         .map((intervalo) => ({
           inicio: timeToMinutes(intervalo.inicio),
@@ -144,8 +156,18 @@ export class ProfissionaisService {
       }
     }
 
-    for (const horario of horarios) {
-      await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.horarioProfissional.deleteMany({
+        where: horarios.length
+          ? {
+              empresaId,
+              profissionalId,
+              diaSemana: { notIn: horarios.map((horario) => horario.diaSemana) },
+            }
+          : { empresaId, profissionalId },
+      });
+
+      for (const horario of horarios) {
         const anterior = await tx.horarioProfissional.findFirst({
           where: {
             profissionalId,
@@ -215,8 +237,8 @@ export class ProfissionaisService {
             },
           });
         }
-      });
-    }
+      }
+    });
 
     return this.consultarJornada(empresaId, profissionalId);
   }
