@@ -118,7 +118,7 @@ export class AgendamentosService {
       where: {
         empresaId,
         profissionalId: query.profissionalId,
-        status: 'AGENDADO',
+        status: { in: ['AGENDADO', 'PENDENTE'] },
         inicio: { gte: dia, lt: fimDia },
       },
       select: { inicio: true, fim: true },
@@ -283,7 +283,7 @@ export class AgendamentosService {
         where: {
           empresaId,
           profissionalId: dto.profissionalId,
-          status: 'AGENDADO',
+          status: { in: ['AGENDADO', 'PENDENTE'] },
           inicio: { lt: fim },
           fim: { gt: inicio }
         }
@@ -445,7 +445,7 @@ export class AgendamentosService {
           id: { not: id },
           empresaId,
           profissionalId,
-          status: 'AGENDADO',
+          status: { in: ['AGENDADO', 'PENDENTE'] },
           inicio: { lt: fim },
           fim: { gt: inicio },
         },

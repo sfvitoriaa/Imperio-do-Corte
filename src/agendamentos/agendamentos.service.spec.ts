@@ -3,6 +3,10 @@ import { AgendamentosService } from './agendamentos.service.js';
 import { EmpresasService } from '../empresas/empresas.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
+vi.mock('../prisma/prisma.service.js', () => ({
+  PrismaService: class PrismaService {},
+}));
+
 describe('AgendamentosService', () => {
   const prisma = {
     cliente: {
@@ -257,6 +261,47 @@ describe('AgendamentosService', () => {
     });
 
     expect(horarios).toEqual(['09:00', '09:30', '10:00', '10:30', '11:00']);
+    expect(prisma.agendamento.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ['AGENDADO', 'PENDENTE'] },
+        }),
+      }),
+    );
+  });
+
+  it('rejects a new appointment that overlaps an existing pending appointment', async () => {
+    prisma.cliente.findFirst.mockResolvedValue({ id: 2 });
+    prisma.profissional.findFirst.mockResolvedValue({
+      id: 7,
+      nome: 'João',
+      ativo: true,
+    });
+    prisma.servico.findMany.mockResolvedValue([
+      { id: 9, preco: 45.5, duracaoMin: 30 },
+    ]);
+    prisma.agendamento.findFirst.mockResolvedValue({
+      inicio: new Date('2027-01-10T09:00:00.000Z'),
+      fim: new Date('2027-01-10T09:30:00.000Z'),
+    });
+
+    await expect(
+      service.create(3, {
+        clienteId: 2,
+        profissionalId: 7,
+        inicio: '2027-01-10T09:00:00.000Z',
+        servicoIds: [9],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(prisma.agendamento.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ['AGENDADO', 'PENDENTE'] },
+        }),
+      }),
+    );
+    expect(prisma.agendamento.create).not.toHaveBeenCalled();
   });
 
   it('removes occupied slots and overlapping breaks', async () => {

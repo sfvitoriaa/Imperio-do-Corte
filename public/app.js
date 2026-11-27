@@ -32,6 +32,7 @@ const menuToggle = document.querySelector('#menu-toggle');
 const SELECTED_COMPANY_KEY = 'barbercut:selected-company';
 
 let selectedCompany = null;
+let appointmentsLoadSequence = 0;
 
 try {
   selectedCompany = JSON.parse(localStorage.getItem(SELECTED_COMPANY_KEY));
@@ -371,6 +372,7 @@ function pageContent(page) {
   if (page.id === 'clientes') return clientsContent();
   if (page.id === 'profissionais') return professionalsContent();
   if (page.id === 'servicos') return servicesContent();
+  if (page.id === 'agendamentos') return appointmentsContent();
 
   const actionLabels = {
     agendamentos: 'Novo agendamento',
@@ -394,6 +396,493 @@ function pageContent(page) {
       </div>
     </article>
   `;
+}
+
+function appointmentsContent() {
+  return `
+    <div class="page-header">
+      <div><h2>Agendamentos</h2><p>Consulte horários e organize os atendimentos da empresa selecionada</p></div>
+      <button class="action-button" type="button" id="new-appointment">+ Novo agendamento</button>
+    </div>
+    <div class="management-toolbar">
+      <form class="appointment-filters" id="appointment-filters">
+        <label class="search-field">Cliente
+          <input type="search" name="cliente" placeholder="Pesquisar cliente" autocomplete="off" />
+        </label>
+        <label class="search-field">Profissional
+          <select name="profissional"><option value="">Todos os profissionais</option></select>
+        </label>
+        <label class="search-field">Data
+          <input type="date" name="data" value="${localDateKey(new Date())}" />
+        </label>
+        <label class="search-field">Situação
+          <select name="status">
+            <option value="">Todas</option>
+            <option value="PENDENTE">Pendente</option>
+            <option value="AGENDADO">Agendado</option>
+            <option value="CONCLUIDO">Concluído</option>
+            <option value="CANCELADO">Cancelado</option>
+            <option value="FALTOU">Não compareceu</option>
+          </select>
+        </label>
+        <div class="toolbar-actions">
+          <button class="action-button" type="submit">Filtrar</button>
+          <button class="secondary-button" type="button" id="clear-appointment-filters">Limpar</button>
+        </div>
+      </form>
+    </div>
+    <div class="management-error" id="appointments-error" role="alert" hidden></div>
+    <div class="table-card">
+      <div class="table-scroll">
+        <table class="data-table appointments-table">
+          <thead><tr><th>Data e horário</th><th>Cliente</th><th>Profissional</th><th>Serviço</th><th>Valor</th><th>Situação</th><th class="actions-column">Ações</th></tr></thead>
+          <tbody id="appointments-table-body"><tr><td colspan="7"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando agendamentos...</span></div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <dialog class="entity-dialog appointment-dialog-form" id="appointment-form-dialog" aria-labelledby="appointment-form-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Atendimento</span><h2 id="appointment-form-title">Novo agendamento</h2></div>
+        <button class="dialog-close" type="button" data-close-appointment aria-label="Fechar">&times;</button>
+      </div>
+      <div class="entity-dialog-content" id="appointment-form-content"></div>
+    </dialog>
+  `;
+}
+
+function agendaWallDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? 'Data indisponível'
+    : date.toLocaleDateString('pt-BR', { timeZone: 'UTC', day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function agendaWallTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleTimeString('pt-BR', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' });
+}
+
+function appointmentPrice(appointment) {
+  return (appointment.servicos || []).reduce((total, item) => total + Number(item.precoCobrado || 0), 0);
+}
+
+function initAppointmentsPage() {
+  const body = document.querySelector('#appointments-table-body');
+  if (!body) return;
+  const dialog = document.querySelector('#appointment-form-dialog');
+  document.querySelector('#new-appointment').addEventListener('click', () => openAppointmentForm());
+  document.querySelector('[data-close-appointment]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  document.querySelector('#appointment-filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    loadAppointments();
+  });
+  document.querySelector('#clear-appointment-filters').addEventListener('click', () => {
+    const form = document.querySelector('#appointment-filters');
+    form.reset();
+    form.elements.data.value = '';
+    loadAppointments();
+  });
+  body.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-appointment-action]');
+    if (!button) return;
+    const appointmentId = Number(button.dataset.appointmentId);
+    if (button.dataset.appointmentAction === 'edit') openAppointmentForm({ id: appointmentId });
+    if (button.dataset.appointmentAction === 'cancel') cancelAppointment(appointmentId);
+  });
+  loadAppointmentProfessionals();
+  loadAppointments();
+}
+
+async function loadAppointmentProfessionals() {
+  const select = document.querySelector('#appointment-filters select[name="profissional"]');
+  const companyId = selectedCompany?.id;
+  if (!select || !companyId) return;
+  try {
+    const professionals = await apiFetch('/profissionais?ativos=true');
+    if (selectedCompany?.id !== companyId || !select.isConnected) return;
+    if (!Array.isArray(professionals)) throw new Error('A API retornou uma lista de profissionais inválida.');
+    select.innerHTML = '<option value="">Todos os profissionais</option>' +
+      professionals.map((professional) => `<option value="${professional.id}">${escapeHtml(professional.nome)}</option>`).join('');
+  } catch (error) {
+    showToast(`Não foi possível carregar os profissionais: ${error.message}`, 'error');
+  }
+}
+
+async function loadAppointments() {
+  const body = document.querySelector('#appointments-table-body');
+  const errorBox = document.querySelector('#appointments-error');
+  const filters = document.querySelector('#appointment-filters');
+  const companyId = selectedCompany?.id;
+  if (!body || !filters || !companyId) return;
+  const params = new URLSearchParams();
+  const date = filters.elements.data.value;
+  const professionalId = filters.elements.profissional.value;
+  if (date) params.set('data', date);
+  if (professionalId) params.set('profissionalId', professionalId);
+  const clientSearch = filters.elements.cliente.value.trim().toLocaleLowerCase('pt-BR');
+  const status = filters.elements.status.value;
+  const sequence = ++appointmentsLoadSequence;
+  errorBox.hidden = true;
+  body.innerHTML = '<tr><td colspan="7"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando agendamentos...</span></div></td></tr>';
+
+  try {
+    const query = params.toString();
+    const appointments = await apiFetch(`/agendamentos${query ? `?${query}` : ''}`);
+    if (!Array.isArray(appointments)) throw new Error('A API retornou uma lista de agendamentos inválida.');
+    if (selectedCompany?.id !== companyId || !body.isConnected || sequence !== appointmentsLoadSequence) return;
+    const visible = appointments.filter((appointment) =>
+      (!clientSearch || String(appointment.cliente?.nome || '').toLocaleLowerCase('pt-BR').includes(clientSearch)) &&
+      (!status || appointment.status === status),
+    );
+    body.innerHTML = visible.length
+      ? visible.map((appointment) => {
+        const editable = ['AGENDADO', 'PENDENTE'].includes(appointment.status);
+        const services = (appointment.servicos || []).map((item) => item.servico?.nome).filter(Boolean).join(', ');
+        return `<tr>
+          <td><strong class="table-primary">${escapeHtml(agendaWallDate(appointment.inicio))}</strong><small class="appointment-time-cell">${escapeHtml(agendaWallTime(appointment.inicio))}</small></td>
+          <td>${escapeHtml(appointment.cliente?.nome || 'Cliente não informado')}<small class="appointment-time-cell">${escapeHtml(formatPhone(appointment.cliente?.telefone))}</small></td>
+          <td>${escapeHtml(appointment.profissional?.nome || '—')}</td>
+          <td>${escapeHtml(services || '—')}</td>
+          <td>${escapeHtml(formatCurrency(appointmentPrice(appointment)))}</td>
+          <td><span class="status-badge status-${escapeHtml(String(appointment.status).toLowerCase())}">${escapeHtml(appointmentStatusLabels[appointment.status] || appointment.status)}</span></td>
+          <td class="table-actions">${editable
+            ? `<button class="table-action" type="button" data-appointment-action="edit" data-appointment-id="${appointment.id}">Editar</button><button class="table-action appointment-cancel-action" type="button" data-appointment-action="cancel" data-appointment-id="${appointment.id}">Cancelar</button>`
+            : '—'}</td>
+        </tr>`;
+      }).join('')
+      : '<tr><td colspan="7"><div class="table-state"><strong>Nenhum agendamento encontrado</strong><span>Revise os filtros ou crie um novo agendamento.</span></div></td></tr>';
+  } catch (error) {
+    if (selectedCompany?.id !== companyId || !body.isConnected || sequence !== appointmentsLoadSequence) return;
+    body.innerHTML = '<tr><td colspan="7"><div class="table-state">A agenda não está disponível.</div></td></tr>';
+    errorBox.innerHTML = `<span>Não foi possível carregar os agendamentos: ${escapeHtml(error.message)}</span><button class="secondary-button" type="button" id="retry-appointments">Tentar novamente</button>`;
+    errorBox.hidden = false;
+    document.querySelector('#retry-appointments').addEventListener('click', loadAppointments);
+  }
+}
+
+async function openAppointmentForm(appointmentRef = null) {
+  const dialog = document.querySelector('#appointment-form-dialog');
+  const content = document.querySelector('#appointment-form-content');
+  const title = document.querySelector('#appointment-form-title');
+  const companyId = selectedCompany?.id;
+  if (!dialog || !content || !companyId) return;
+  title.textContent = appointmentRef ? 'Editar agendamento' : 'Novo agendamento';
+  content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Preparando o agendamento...</span></div>';
+  dialog.showModal();
+  let appointment = null;
+  try {
+    const [professionals, services] = await Promise.all([
+      apiFetch('/profissionais?ativos=true'),
+      apiFetch('/servicos?ativos=true'),
+    ]);
+    if (appointmentRef) appointment = await apiFetch(`/agendamentos/${appointmentRef.id}`);
+    if (selectedCompany?.id !== companyId || !dialog.open) return;
+    if (!Array.isArray(professionals) || !Array.isArray(services)) throw new Error('A API retornou dados inválidos para o formulário.');
+    renderAppointmentForm({ appointment, professionals, services, companyId });
+  } catch (error) {
+    content.innerHTML = `<p class="form-error">Não foi possível carregar os dados do agendamento: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderAppointmentForm({ appointment, professionals, services, companyId }) {
+  const content = document.querySelector('#appointment-form-content');
+  const initialServiceId = appointment?.servicos?.[0]?.servico?.id || '';
+  const initialClient = appointment?.cliente || null;
+  const initialDate = appointment?.inicio
+    ? new Date(appointment.inicio).toISOString().slice(0, 10)
+    : localDateKey(new Date());
+  const initialTime = appointment?.inicio ? agendaWallTime(appointment.inicio) : '';
+  content.innerHTML = `
+    <form class="entity-form appointment-form" id="appointment-form" novalidate>
+      <section class="appointment-form-section">
+        <div class="appointment-section-heading"><span>1</span><strong>Cliente</strong></div>
+        <label>Pesquisar cliente por nome ou telefone
+          <input type="search" name="clienteBusca" placeholder="Digite o nome ou telefone" autocomplete="off" value="${escapeHtml(initialClient?.nome || '')}" />
+        </label>
+        <input type="hidden" name="clienteId" value="${initialClient?.id || ''}" />
+        <div class="client-search-results" id="appointment-client-results" role="listbox"></div>
+        <div class="appointment-client-selected" id="appointment-client-selected">${initialClient ? `Selecionado: <strong>${escapeHtml(initialClient.nome)}</strong>` : 'Selecione um cliente para continuar.'}</div>
+        <button class="text-link appointment-inline-link" type="button" id="show-quick-client">+ Cadastrar cliente rápido</button>
+        <div class="quick-client-form" id="quick-client-form" hidden>
+          <label>Nome<input name="novoClienteNome" maxlength="191" autocomplete="name" /></label>
+          <label>Telefone com DDD<input name="novoClienteTelefone" type="tel" inputmode="tel" placeholder="11987654321" autocomplete="tel" /></label>
+          <button class="secondary-button" type="button" id="create-quick-client">Cadastrar e selecionar</button>
+          <small class="field-error" id="quick-client-error"></small>
+        </div>
+      </section>
+      <div class="form-grid">
+        <label>Profissional
+          <select name="profissionalId" required><option value="">Selecione</option>${professionals.map((person) => `<option value="${person.id}" ${Number(appointment?.profissionalId) === person.id ? 'selected' : ''}>${escapeHtml(person.nome)}</option>`).join('')}</select>
+        </label>
+        <label>Serviço
+          <select name="servicoId" required><option value="">Selecione</option>${services.map((service) => `<option value="${service.id}" ${Number(initialServiceId) === service.id ? 'selected' : ''}>${escapeHtml(service.nome)}</option>`).join('')}</select>
+        </label>
+        <label>Data
+          <input name="data" type="date" required min="${localDateKey(new Date())}" value="${escapeHtml(initialDate)}" />
+        </label>
+        <div class="appointment-service-summary" id="appointment-service-summary">Selecione um serviço para consultar preço e duração.</div>
+      </div>
+      <div class="appointment-availability">
+        <button class="secondary-button" type="button" id="check-availability">Consultar horários disponíveis</button>
+        <div class="appointment-slots" id="appointment-slots" aria-live="polite"><span>Escolha profissional, serviço e data.</span></div>
+        <small class="field-error" id="appointment-form-error"></small>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-close-appointment>Voltar</button>
+        <button class="action-button" type="submit" disabled>${appointment ? 'Salvar alterações' : 'Confirmar agendamento'}</button>
+      </div>
+    </form>
+  `;
+
+  const form = content.querySelector('#appointment-form');
+  const slots = content.querySelector('#appointment-slots');
+  const submitButton = form.querySelector('[type="submit"]');
+  const clientSearch = form.elements.clienteBusca;
+  let selectedClient = initialClient;
+  let selectedTime = initialTime;
+  let searchTimer;
+  let searchSequence = 0;
+  let checkedAvailabilityKey = '';
+
+  const updateClient = (client) => {
+    selectedClient = client;
+    form.elements.clienteId.value = client?.id || '';
+    content.querySelector('#appointment-client-selected').innerHTML = client
+      ? `Selecionado: <strong>${escapeHtml(client.nome)}</strong> · ${escapeHtml(formatPhone(client.telefone))}`
+      : 'Selecione um cliente para continuar.';
+    content.querySelector('#appointment-client-results').innerHTML = '';
+  };
+  const invalidateSlots = () => {
+    selectedTime = '';
+    checkedAvailabilityKey = '';
+    submitButton.disabled = true;
+    slots.innerHTML = '<span>Consulte os horários para continuar.</span>';
+  };
+  const availabilityKey = () => [
+    form.elements.profissionalId.value,
+    form.elements.servicoId.value,
+    form.elements.data.value,
+  ].join('|');
+
+  clientSearch.addEventListener('input', () => {
+    const sequence = ++searchSequence;
+    updateClient(null);
+    window.clearTimeout(searchTimer);
+    const term = clientSearch.value.trim();
+    const results = content.querySelector('#appointment-client-results');
+    if (term.length < 2) {
+      results.innerHTML = '';
+      return;
+    }
+    searchTimer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        if (/^\d[\d\s()+-]*$/.test(term)) params.set('telefone', term.replace(/\D/g, ''));
+        else params.set('nome', term);
+        const clients = await apiFetch(`/clientes?${params.toString()}`);
+        if (!Array.isArray(clients)) throw new Error('A API retornou uma lista de clientes inválida.');
+        if (sequence !== searchSequence || !results.isConnected) return;
+        results.innerHTML = clients.length
+          ? clients.slice(0, 6).map((client) => `<button class="client-result" type="button" data-client-id="${client.id}"><strong>${escapeHtml(client.nome)}</strong><span>${escapeHtml(formatPhone(client.telefone))}</span></button>`).join('')
+          : '<span class="field-hint">Nenhum cliente encontrado. Você pode cadastrá-lo rapidamente.</span>';
+        results.querySelectorAll('[data-client-id]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const client = clients.find((item) => item.id === Number(button.dataset.clientId));
+            if (!client) return;
+            clientSearch.value = client.nome;
+            updateClient(client);
+          });
+        });
+      } catch (error) {
+        if (sequence === searchSequence && results.isConnected) {
+          results.innerHTML = `<span class="form-error">Falha na busca: ${escapeHtml(error.message)}</span>`;
+        }
+      }
+    }, 250);
+  });
+
+  content.querySelector('#show-quick-client').addEventListener('click', () => {
+    const quickForm = content.querySelector('#quick-client-form');
+    quickForm.hidden = !quickForm.hidden;
+    if (!quickForm.hidden) quickForm.querySelector('input').focus();
+  });
+  content.querySelector('#create-quick-client').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const name = form.elements.novoClienteNome.value.trim();
+    const phone = form.elements.novoClienteTelefone.value.replace(/\D/g, '');
+    const error = content.querySelector('#quick-client-error');
+    error.textContent = '';
+    if (!name || !/^\d{10,11}$/.test(phone)) {
+      error.textContent = 'Informe o nome e um telefone com DDD (10 ou 11 dígitos).';
+      return;
+    }
+    button.disabled = true;
+    try {
+      const client = await apiFetch('/clientes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome: name, telefone: phone }),
+      });
+      if (selectedCompany?.id !== companyId) return;
+      clientSearch.value = client.nome;
+      updateClient(client);
+      content.querySelector('#quick-client-form').hidden = true;
+      showToast('Cliente cadastrado e selecionado.');
+    } catch (error) {
+      content.querySelector('#quick-client-error').textContent = `Não foi possível cadastrar: ${error.message}`;
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  });
+
+  ['profissionalId', 'servicoId', 'data'].forEach((field) => {
+    form.elements[field].addEventListener('change', invalidateSlots);
+  });
+  const updateServiceSummary = () => {
+    const service = services.find((item) => item.id === Number(form.elements.servicoId.value));
+    const appointmentService = appointment?.servicos?.find(
+      (item) => item.servico?.id === service?.id,
+    );
+    const price = appointmentService?.precoCobrado ?? service?.preco;
+    content.querySelector('#appointment-service-summary').innerHTML = service
+      ? `<strong>${escapeHtml(formatCurrency(price))}</strong><span>${escapeHtml(String(service.duracaoMin))} min</span>`
+      : 'Selecione um serviço para consultar preço e duração.';
+  };
+  form.elements.servicoId.addEventListener('change', updateServiceSummary);
+  updateServiceSummary();
+  content.querySelectorAll('[data-close-appointment]').forEach((button) => {
+    button.addEventListener('click', () => document.querySelector('#appointment-form-dialog').close());
+  });
+
+  content.querySelector('#check-availability').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const professionalId = Number(form.elements.profissionalId.value);
+    const serviceId = Number(form.elements.servicoId.value);
+    const date = form.elements.data.value;
+    const requestKey = availabilityKey();
+    const formError = content.querySelector('#appointment-form-error');
+    formError.textContent = '';
+    selectedTime = '';
+    submitButton.disabled = true;
+    if (!professionalId || !serviceId || !date) {
+      formError.textContent = 'Selecione profissional, serviço e data.';
+      return;
+    }
+    button.disabled = true;
+    slots.innerHTML = '<span class="inline-loading"><span class="spinner" aria-label="Carregando"></span> Consultando horários...</span>';
+    try {
+      const params = new URLSearchParams({ profissionalId: String(professionalId), servicoId: String(serviceId), data: date });
+      const available = await apiFetch(`/agendamentos/disponibilidade?${params.toString()}`);
+      if (!Array.isArray(available)) throw new Error('A API retornou horários inválidos.');
+      if (selectedCompany?.id !== companyId || !form.isConnected) return;
+      if (requestKey !== availabilityKey()) return;
+      const isUnchangedCurrentSlot = appointment &&
+        Number(appointment.profissionalId) === professionalId &&
+        Number(appointment.servicos?.[0]?.servico?.id) === serviceId &&
+        new Date(appointment.inicio).toISOString().slice(0, 10) === date;
+      const currentTime = isUnchangedCurrentSlot ? agendaWallTime(appointment.inicio) : '';
+      const choices = [...new Set([...available, ...(currentTime && !available.includes(currentTime) ? [currentTime] : [])])].sort();
+      checkedAvailabilityKey = requestKey;
+      slots.innerHTML = choices.length
+        ? choices.map((time) => `<button class="appointment-slot ${time === currentTime ? 'current-slot' : ''}" type="button" data-slot="${time}">${time}${time === currentTime ? '<small>atual</small>' : ''}</button>`).join('')
+        : '<span class="field-hint">Nenhum horário disponível nesta data. Escolha outro dia ou profissional.</span>';
+      slots.querySelectorAll('[data-slot]').forEach((slot) => {
+        slot.addEventListener('click', () => {
+          selectedTime = slot.dataset.slot;
+          slots.querySelectorAll('.appointment-slot').forEach((item) => item.classList.toggle('selected', item === slot));
+          submitButton.disabled = false;
+        });
+      });
+      if (currentTime && choices.includes(currentTime)) {
+        selectedTime = currentTime;
+        slots.querySelector(`[data-slot="${currentTime}"]`)?.classList.add('selected');
+        submitButton.disabled = false;
+      }
+    } catch (error) {
+      slots.innerHTML = `<span class="form-error">Não foi possível consultar a disponibilidade: ${escapeHtml(error.message)}</span>`;
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formError = content.querySelector('#appointment-form-error');
+    formError.textContent = '';
+    if (!selectedClient) {
+      formError.textContent = 'Pesquise e selecione um cliente.';
+      return;
+    }
+    if (!selectedTime || checkedAvailabilityKey !== availabilityKey()) {
+      formError.textContent = 'Consulte a disponibilidade e selecione um horário antes de confirmar.';
+      return;
+    }
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const params = new URLSearchParams({
+        profissionalId: form.elements.profissionalId.value,
+        servicoId: form.elements.servicoId.value,
+        data: form.elements.data.value,
+      });
+      const available = await apiFetch(`/agendamentos/disponibilidade?${params.toString()}`);
+      const isCurrentSlot = appointment &&
+        Number(appointment.profissionalId) === Number(form.elements.profissionalId.value) &&
+        Number(appointment.servicos?.[0]?.servico?.id) === Number(form.elements.servicoId.value) &&
+        new Date(appointment.inicio).toISOString().slice(0, 10) === form.elements.data.value &&
+        agendaWallTime(appointment.inicio) === selectedTime;
+      if (!available.includes(selectedTime) && !isCurrentSlot) {
+        throw new Error('Este horário acabou de ficar ocupado. Consulte novamente para escolher outro.');
+      }
+      const payload = {
+        clienteId: Number(selectedClient.id),
+        profissionalId: Number(form.elements.profissionalId.value),
+        inicio: `${form.elements.data.value}T${selectedTime}:00.000Z`,
+        ...(appointment && Number(form.elements.servicoId.value) === Number(initialServiceId)
+          ? {}
+          : { servicoIds: [Number(form.elements.servicoId.value)] }),
+      };
+      await apiFetch(appointment ? `/agendamentos/${appointment.id}/editar` : '/agendamentos', {
+        method: appointment ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (selectedCompany?.id !== companyId) return;
+      document.querySelector('#appointment-form-dialog').close();
+      showToast(appointment ? 'Agendamento atualizado.' : 'Agendamento confirmado.');
+      await loadAppointments();
+    } catch (error) {
+      formError.textContent = error.message.includes('ocupado')
+        ? error.message
+        : `Não foi possível confirmar: ${error.message}`;
+      if (error.message.includes('ocupado') || error.message.includes('atendimento das')) {
+        showToast('O horário não está mais disponível. Atualize os horários.', 'error');
+        invalidateSlots();
+        formError.textContent = error.message;
+      }
+    } finally {
+      if (submit.isConnected) submit.disabled = !selectedTime;
+    }
+  });
+
+  if (appointment && initialTime) content.querySelector('#check-availability').click();
+}
+
+async function cancelAppointment(appointmentId) {
+  const confirmed = await confirmAction('Cancelar agendamento', 'Deseja realmente cancelar este atendimento?');
+  if (!confirmed) return;
+  try {
+    await apiFetch(`/agendamentos/${appointmentId}/cancelar`, { method: 'POST' });
+    showToast('Agendamento cancelado.');
+    await loadAppointments();
+  } catch (error) {
+    showToast(`Não foi possível cancelar o agendamento: ${error.message}`, 'error');
+  }
 }
 
 function clientsContent() {
@@ -1400,6 +1889,7 @@ async function renderRoute() {
   if (page.id === 'clientes') initClientsPage();
   if (page.id === 'profissionais') initProfessionalsPage();
   if (page.id === 'servicos') initServicesPage();
+  if (page.id === 'agendamentos') initAppointmentsPage();
   closeMenu();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'smooth' });
