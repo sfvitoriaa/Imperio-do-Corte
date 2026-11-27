@@ -102,24 +102,268 @@ function dashboardContent() {
     <div class="page-header">
       <div>
         <h2>Dashboard</h2>
-        <p>Visão geral da barbearia</p>
+        <p id="dashboard-date"></p>
       </div>
+      <button class="action-button" type="button" id="refresh-dashboard">Atualizar</button>
     </div>
-    <div class="card-grid">
-      <article class="card">
-        <h3>Agendamentos de hoje</h3>
-        <p class="card-value">—</p>
-      </article>
-      <article class="card">
-        <h3>Clientes cadastrados</h3>
-        <p class="card-value">—</p>
-      </article>
-      <article class="card">
-        <h3>Profissionais ativos</h3>
-        <p class="card-value">—</p>
-      </article>
+    <div class="dashboard-error" id="dashboard-error" role="alert" hidden></div>
+    <div class="dashboard-stats" id="dashboard-stats" aria-live="polite">
+      ${['Agendamentos de hoje', 'Pendentes', 'Concluídos', 'Cancelamentos']
+        .map((label) => `<article class="card stat-card"><h3>${label}</h3><p class="card-value"><span class="spinner" aria-label="Carregando"></span></p></article>`)
+        .join('')}
     </div>
+    <div class="dashboard-columns">
+      <section class="dashboard-panel">
+        <div class="panel-heading">
+          <div><h3>Próximos agendamentos</h3><p>Atendimentos de hoje que ainda vão começar</p></div>
+          <a class="text-link" href="#/agendamentos">Ver agenda</a>
+        </div>
+        <div id="upcoming-appointments" class="appointment-list" aria-live="polite"></div>
+      </section>
+      <section class="dashboard-panel attention-panel">
+        <div class="panel-heading">
+          <div><h3>Horários que precisam de atenção</h3><p>Pendências e alterações registradas</p></div>
+        </div>
+        <div id="schedule-attention" class="attention-list" aria-live="polite"></div>
+      </section>
+    </div>
+    <dialog class="appointment-dialog" id="appointment-dialog" aria-labelledby="appointment-dialog-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Detalhes do atendimento</span><h2 id="appointment-dialog-title">Agendamento</h2></div>
+        <button class="dialog-close" type="button" aria-label="Fechar detalhes">&times;</button>
+      </div>
+      <div id="appointment-details" class="appointment-details"></div>
+    </dialog>
   `;
+}
+
+const appointmentStatusLabels = {
+  PENDENTE: 'Pendente',
+  AGENDADO: 'Agendado',
+  CONCLUIDO: 'Concluído',
+  CANCELADO: 'Cancelado',
+  FALTOU: 'Não compareceu',
+  NAO_COMPARECEU: 'Não compareceu',
+};
+
+function localDateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function formatDateTime(value, options = {}) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Horário indisponível';
+  return date.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    ...options,
+  });
+}
+
+function formatTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatAppointmentDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? 'Data indisponível'
+    : date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+}
+
+function appointmentServiceNames(appointment) {
+  return (appointment.servicos || [])
+    .map((item) => item.servico?.nome)
+    .filter(Boolean)
+    .join(', ');
+}
+
+function attentionItems(notifications, appointments, now) {
+  const overdue = appointments
+    .filter((appointment) =>
+      ['AGENDADO', 'PENDENTE'].includes(appointment.status) &&
+      new Date(appointment.fim) < now,
+    )
+    .map((appointment) => ({
+      id: `overdue-${appointment.id}`,
+      appointmentId: appointment.id,
+      title: 'Atendimento pendente após o horário',
+      description: `${appointment.cliente?.nome || 'Cliente não informado'} · ${formatDateTime(appointment.inicio)}`,
+      type: 'overdue',
+    }));
+
+  const scheduleChanges = notifications
+    .filter((notification) =>
+      ['ALTERACAO_HORARIO', 'PENDENTE_FINALIZACAO'].includes(notification.tipo),
+    )
+    .map((notification) => ({
+      id: `${notification.tipo}-${notification.referenciaId}`,
+      appointmentId: notification.tipo === 'PENDENTE_FINALIZACAO'
+        ? notification.dados?.id
+        : undefined,
+      title: notification.tipo === 'ALTERACAO_HORARIO'
+        ? 'Alteração de horário'
+        : 'Atendimento aguardando finalização',
+      description: notification.dados?.mensagem ||
+        (notification.dados?.cliente?.nome
+          ? `${notification.dados.cliente.nome} · ${formatDateTime(notification.dados.inicio)}`
+          : `Referência #${notification.referenciaId}`),
+      type: notification.tipo === 'ALTERACAO_HORARIO' ? 'change' : 'overdue',
+    }));
+
+  const unique = new Map();
+  [...overdue, ...scheduleChanges].forEach((item) => {
+    unique.set(item.appointmentId ? `appointment-${item.appointmentId}` : item.id, item);
+  });
+  return [...unique.values()];
+}
+
+async function loadDashboard() {
+  const companyId = selectedCompany?.id;
+  const route = window.location.hash.replace(/^#\/?/, '') || 'dashboard';
+  if (!companyId || route !== 'dashboard') return;
+
+  const errorBox = document.querySelector('#dashboard-error');
+  const stats = document.querySelector('#dashboard-stats');
+  const upcomingList = document.querySelector('#upcoming-appointments');
+  const attentionList = document.querySelector('#schedule-attention');
+  const refreshButton = document.querySelector('#refresh-dashboard');
+  const now = new Date();
+  document.querySelector('#dashboard-date').textContent = now.toLocaleDateString('pt-BR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  refreshButton.disabled = true;
+  errorBox.hidden = true;
+  stats.innerHTML = ['Agendamentos de hoje', 'Pendentes', 'Concluídos', 'Cancelamentos']
+    .map((label) => `<article class="card stat-card"><h3>${label}</h3><p class="card-value"><span class="spinner" aria-label="Carregando"></span></p></article>`)
+    .join('');
+  upcomingList.innerHTML = '<div class="inline-loading"><span class="spinner" aria-label="Carregando"></span><span>Buscando agenda...</span></div>';
+  attentionList.innerHTML = '<div class="inline-loading"><span class="spinner" aria-label="Carregando"></span><span>Buscando pendências...</span></div>';
+
+  try {
+    const [appointments, notifications] = await Promise.all([
+      apiFetch(`/agendamentos?data=${localDateKey(now)}`),
+      apiFetch('/notificacoes'),
+    ]);
+
+    if (selectedCompany?.id !== companyId ||
+        (window.location.hash.replace(/^#\/?/, '') || 'dashboard') !== 'dashboard') return;
+
+    if (!Array.isArray(appointments) || !Array.isArray(notifications)) {
+      throw new Error('A API retornou dados inválidos para o dashboard.');
+    }
+
+    const todaysAppointments = appointments;
+    const pending = todaysAppointments.filter((item) => ['AGENDADO', 'PENDENTE'].includes(item.status));
+    const completed = todaysAppointments.filter((item) => item.status === 'CONCLUIDO');
+    const cancelled = todaysAppointments.filter((item) => item.status === 'CANCELADO');
+
+    stats.innerHTML = [
+      ['Agendamentos de hoje', todaysAppointments.length, 'total'],
+      ['Pendentes', pending.length, 'pending'],
+      ['Concluídos', completed.length, 'completed'],
+      ['Cancelamentos', cancelled.length, 'cancelled'],
+    ].map(([label, count, type]) => `
+      <article class="card stat-card stat-${type}">
+        <h3>${label}</h3>
+        <p class="card-value">${count}</p>
+      </article>
+    `).join('');
+
+    const upcoming = pending
+      .filter((item) => new Date(item.inicio) >= now)
+      .sort((a, b) => new Date(a.inicio) - new Date(b.inicio));
+
+    upcomingList.innerHTML = upcoming.length
+      ? upcoming.map((appointment) => `
+        <article class="appointment-row">
+          <div class="appointment-time">
+            <strong>${formatTime(appointment.inicio)}</strong>
+            <span>${formatAppointmentDate(appointment.inicio)}</span>
+          </div>
+          <div class="appointment-summary">
+            <strong>${escapeHtml(appointment.cliente?.nome || 'Cliente não informado')}</strong>
+            <span>${escapeHtml(appointment.profissional?.nome || 'Profissional não informado')}</span>
+            <small>${escapeHtml(appointmentServiceNames(appointment) || 'Serviço não informado')}</small>
+          </div>
+          <span class="status-badge status-${appointment.status.toLowerCase()}">${appointmentStatusLabels[appointment.status] || escapeHtml(appointment.status)}</span>
+          <button class="details-button" type="button" data-appointment-id="${appointment.id}">Detalhes</button>
+        </article>
+      `).join('')
+      : '<div class="empty-inline"><strong>Nenhum próximo atendimento</strong><span>Não há outros horários pendentes hoje.</span></div>';
+
+    const attention = attentionItems(notifications, todaysAppointments, now);
+    attentionList.innerHTML = attention.length
+      ? attention.map((item) => `
+        <article class="attention-item attention-${item.type}">
+          <span class="attention-indicator" aria-hidden="true"></span>
+          <div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.description)}</span></div>
+          ${item.appointmentId ? `<button class="details-button" type="button" data-appointment-id="${item.appointmentId}">Detalhes</button>` : ''}
+        </article>
+      `).join('')
+      : '<div class="empty-inline"><strong>Tudo em dia</strong><span>Nenhum horário precisa de atenção.</span></div>';
+
+    upcomingList.querySelectorAll('[data-appointment-id]').forEach((button) => {
+      button.addEventListener('click', () => showAppointmentDetails(button.dataset.appointmentId, companyId));
+    });
+    attentionList.querySelectorAll('[data-appointment-id]').forEach((button) => {
+      button.addEventListener('click', () => showAppointmentDetails(button.dataset.appointmentId, companyId));
+    });
+  } catch (error) {
+    if (selectedCompany?.id !== companyId) return;
+    stats.innerHTML = '';
+    upcomingList.innerHTML = '';
+    attentionList.innerHTML = '';
+    errorBox.innerHTML = `
+      <div><strong>Não foi possível carregar o dashboard</strong><span>${escapeHtml(error.message)}</span></div>
+      <button class="action-button" type="button" id="retry-dashboard">Tentar novamente</button>
+    `;
+    errorBox.hidden = false;
+    document.querySelector('#retry-dashboard').addEventListener('click', loadDashboard);
+  } finally {
+    if (selectedCompany?.id === companyId && refreshButton.isConnected) refreshButton.disabled = false;
+  }
+}
+
+async function showAppointmentDetails(appointmentId, companyId) {
+  const dialog = document.querySelector('#appointment-dialog');
+  const details = document.querySelector('#appointment-details');
+  if (!dialog || !details) return;
+
+  details.innerHTML = '<div class="inline-loading"><span class="spinner" aria-label="Carregando"></span><span>Carregando detalhes...</span></div>';
+  dialog.showModal();
+
+  try {
+    const appointment = await apiFetch(`/agendamentos/${appointmentId}`);
+    if (selectedCompany?.id !== companyId) {
+      dialog.close();
+      return;
+    }
+
+    const services = (appointment.servicos || [])
+      .map((item) => item.servico?.nome)
+      .filter(Boolean);
+    details.innerHTML = `
+      <dl>
+        <div><dt>Data e horário</dt><dd>${escapeHtml(formatDateTime(appointment.inicio))}</dd></div>
+        <div><dt>Cliente</dt><dd>${escapeHtml(appointment.cliente?.nome || 'Não informado')}</dd></div>
+        <div><dt>Telefone</dt><dd>${escapeHtml(appointment.cliente?.telefone || 'Não informado')}</dd></div>
+        <div><dt>Profissional</dt><dd>${escapeHtml(appointment.profissional?.nome || 'Não informado')}</dd></div>
+        <div><dt>Serviços</dt><dd>${escapeHtml(services.join(', ') || 'Não informado')}</dd></div>
+        <div><dt>Status</dt><dd>${escapeHtml(appointmentStatusLabels[appointment.status] || appointment.status)}</dd></div>
+      </dl>
+    `;
+  } catch (error) {
+    details.innerHTML = `<p class="details-error" role="alert">Não foi possível carregar os detalhes: ${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function pageContent(page) {
@@ -296,6 +540,15 @@ async function renderRoute() {
   document.querySelectorAll('.nav-link').forEach((link) => {
     link.classList.toggle('active', link.dataset.page === page.id);
   });
+  if (page.id === 'dashboard') {
+    document.querySelector('#refresh-dashboard').addEventListener('click', loadDashboard);
+    const appointmentDialog = document.querySelector('#appointment-dialog');
+    document.querySelector('.dialog-close').addEventListener('click', () => appointmentDialog.close());
+    appointmentDialog.addEventListener('click', (event) => {
+      if (event.target === appointmentDialog) appointmentDialog.close();
+    });
+    loadDashboard();
+  }
   closeMenu();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'smooth' });
