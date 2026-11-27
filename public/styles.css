@@ -534,6 +534,35 @@ button { cursor: pointer; }
 .status-concluido, .status-ativo { border-color: #36573e; color: #9bd1a8; }
 .status-cancelado, .status-inativo { border-color: #633d3d; color: #d99a9a; }
 
+.professionals-table { min-width: 1030px; }
+.professionals-table .schedule-cell { max-width: 270px; color: var(--muted); font-size: 12px; line-height: 1.5; white-space: normal; }
+.professionals-table .actions-column { width: 330px; }
+.professionals-table .table-actions { white-space: normal; }
+.professionals-table .table-action { margin: 3px 0 3px 4px; }
+
+.management-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid #633d3d;
+  border-radius: 9px;
+  background: rgba(99, 61, 61, .13);
+  color: #e8b1b1;
+  font-size: 12px;
+}
+.management-error[hidden] { display: none; }
+
+.agenda-schedule { display: flex; flex-direction: column; gap: 5px; margin-bottom: 18px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: #121315; }
+.agenda-schedule strong { font-size: 12px; }
+.agenda-schedule span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.agenda-date-form { display: flex; align-items: end; gap: 10px; margin-bottom: 12px; }
+.agenda-date-form label { display: flex; flex: 1; flex-direction: column; gap: 7px; color: #dedee0; font-size: 12px; font-weight: 600; }
+.agenda-date-form input { min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #101113; color: var(--text); }
+.agenda-results { border-top: 1px solid var(--border); }
+
 .confirmation-dialog { width: min(430px, calc(100vw - 32px)); }
 .confirmation-message { margin: 0; padding: 20px; color: #c8c8cb; font-size: 14px; line-height: 1.55; }
 .confirmation-dialog > .dialog-actions { padding: 0 20px 20px; }
@@ -771,6 +800,7 @@ button { cursor: pointer; }
   .management-toolbar { padding: 12px; }
   .data-table th, .data-table td { padding: 12px; }
   .entity-dialog-content { padding: 16px; }
+  .agenda-date-form { align-items: stretch; flex-direction: column; }
   .toast-region { right: 12px; bottom: 12px; }
   .company-selection-page { justify-content: flex-start; padding: 32px 16px; }
   .company-grid { grid-template-columns: 1fr; }

@@ -369,9 +369,9 @@ async function showAppointmentDetails(appointmentId, companyId) {
 function pageContent(page) {
   if (page.id === 'dashboard') return dashboardContent();
   if (page.id === 'clientes') return clientsContent();
+  if (page.id === 'profissionais') return professionalsContent();
 
   const actionLabels = {
-    profissionais: 'Novo profissional',
     servicos: 'Novo serviço',
     agendamentos: 'Novo agendamento',
   };
@@ -705,6 +705,297 @@ async function loadClientHistory(clientId) {
   }
 }
 
+const weekDays = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+function professionalsContent() {
+  return `
+    <div class="page-header">
+      <div><h2>Profissionais</h2><p>Gerencie a equipe e consulte jornadas e agendas</p></div>
+      <button class="action-button" type="button" id="new-professional">+ Novo profissional</button>
+    </div>
+    <div class="management-error" id="professionals-error" role="alert" hidden></div>
+    <div class="table-card">
+      <div class="table-scroll">
+        <table class="data-table professionals-table">
+          <thead><tr><th>Nome</th><th>Telefone</th><th>Situação</th><th>Horários de trabalho</th><th class="actions-column">Ações</th></tr></thead>
+          <tbody id="professionals-table-body">
+            <tr><td colspan="5"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando profissionais...</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <dialog class="entity-dialog" id="professional-dialog" aria-labelledby="professional-dialog-title">
+      <div class="dialog-heading">
+        <div><span class="topbar-label">Equipe</span><h2 id="professional-dialog-title"></h2></div>
+        <button class="dialog-close" type="button" data-close-professional aria-label="Fechar">&times;</button>
+      </div>
+      <div class="entity-dialog-content" id="professional-dialog-content"></div>
+    </dialog>
+  `;
+}
+
+function initProfessionalsPage() {
+  const body = document.querySelector('#professionals-table-body');
+  if (!body) return;
+  const dialog = document.querySelector('#professional-dialog');
+  document.querySelector('#new-professional').addEventListener('click', () => openProfessionalForm());
+  document.querySelector('[data-close-professional]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  body.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-professional-action]');
+    if (!button) return;
+    const { professionalAction, professionalId } = button.dataset;
+    if (professionalAction === 'view') showProfessionalDetails(professionalId);
+    if (professionalAction === 'edit') openProfessionalForm({ id: Number(professionalId) });
+    if (professionalAction === 'toggle') toggleProfessional(professionalId, button.dataset.active === 'true');
+    if (professionalAction === 'agenda') showProfessionalAgenda(professionalId);
+  });
+  loadProfessionals();
+}
+
+function formatWorkSchedule(hours) {
+  if (!hours?.length) return 'Jornada não definida';
+  return hours.map((schedule) =>
+    `${weekDays[schedule.diaSemana] || 'Dia não informado'} ${schedule.inicio}–${schedule.fim}`,
+  ).join(' · ');
+}
+
+async function loadProfessionals() {
+  const body = document.querySelector('#professionals-table-body');
+  const error = document.querySelector('#professionals-error');
+  if (!body || !selectedCompany?.id) return;
+  const companyId = selectedCompany.id;
+  error.hidden = true;
+  body.innerHTML = '<tr><td colspan="5"><div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando profissionais...</span></div></td></tr>';
+
+  try {
+    const professionals = await apiFetch('/profissionais');
+    if (!Array.isArray(professionals)) throw new Error('A API retornou uma lista de profissionais inválida.');
+    const entries = await Promise.all(professionals.map(async (professional) => ({
+      professional,
+      journey: await apiFetch(`/profissionais/${professional.id}/jornada`),
+    })));
+    if (selectedCompany?.id !== companyId || !body.isConnected) return;
+
+    body.innerHTML = entries.length
+      ? entries.map(({ professional, journey }) => `
+        <tr>
+          <td><strong class="table-primary">${escapeHtml(professional.nome)}</strong></td>
+          <td>${escapeHtml(formatPhone(professional.telefone))}</td>
+          <td><span class="status-badge status-${professional.ativo ? 'ativo' : 'inativo'}">${professional.ativo ? 'Ativo' : 'Inativo'}</span></td>
+          <td class="schedule-cell">${escapeHtml(formatWorkSchedule(journey.horarios))}</td>
+          <td class="table-actions">
+            <button class="table-action" type="button" data-professional-action="view" data-professional-id="${professional.id}">Consultar</button>
+            <button class="table-action" type="button" data-professional-action="agenda" data-professional-id="${professional.id}">Agenda</button>
+            <button class="table-action" type="button" data-professional-action="edit" data-professional-id="${professional.id}">Editar</button>
+            <button class="table-action" type="button" data-professional-action="toggle" data-professional-id="${professional.id}" data-active="${professional.ativo}">${professional.ativo ? 'Desativar' : 'Ativar'}</button>
+          </td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="5"><div class="table-state"><strong>Nenhum profissional cadastrado</strong><span>Cadastre um profissional para começar.</span></div></td></tr>';
+  } catch (requestError) {
+    if (selectedCompany?.id !== companyId || !body.isConnected) return;
+    body.innerHTML = '<tr><td colspan="5"><div class="table-state">A lista não está disponível.</div></td></tr>';
+    error.innerHTML = `<span>Não foi possível carregar os profissionais: ${escapeHtml(requestError.message)}</span><button class="secondary-button" type="button" id="retry-professionals">Tentar novamente</button>`;
+    error.hidden = false;
+    document.querySelector('#retry-professionals').addEventListener('click', loadProfessionals);
+  }
+}
+
+async function openProfessionalForm(professional = null) {
+  const dialog = document.querySelector('#professional-dialog');
+  const title = document.querySelector('#professional-dialog-title');
+  const content = document.querySelector('#professional-dialog-content');
+  let current = professional;
+
+  if (professional?.id) {
+    title.textContent = 'Editar profissional';
+    content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando dados...</span></div>';
+    if (!dialog.open) dialog.showModal();
+    try {
+      current = await apiFetch(`/profissionais/${professional.id}`);
+    } catch (error) {
+      content.innerHTML = `<p class="form-error">Não foi possível carregar o profissional: ${escapeHtml(error.message)}</p>`;
+      return;
+    }
+  } else {
+    title.textContent = 'Novo profissional';
+    current = null;
+  }
+
+  content.innerHTML = `
+    <form class="entity-form" id="professional-form" novalidate>
+      <label>Nome completo
+        <input name="nome" required maxlength="191" autocomplete="name" value="${escapeHtml(current?.nome || '')}" />
+        <small class="field-error" data-error="nome"></small>
+      </label>
+      <label>Telefone com DDD
+        <input name="telefone" type="tel" required inputmode="tel" autocomplete="tel" placeholder="11987654321" value="${escapeHtml(current?.telefone || '')}" />
+        <small class="field-error" data-error="telefone"></small>
+        <small class="field-hint">Informe 10 ou 11 dígitos, incluindo o DDD.</small>
+      </label>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-close-form>Cancelar</button>
+        <button class="action-button" type="submit">${current ? 'Salvar alterações' : 'Cadastrar profissional'}</button>
+      </div>
+    </form>
+  `;
+  if (!dialog.open) dialog.showModal();
+
+  content.querySelector('[data-close-form]').addEventListener('click', () => dialog.close());
+  content.querySelector('#professional-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const payload = {
+      nome: String(formData.get('nome') || '').trim(),
+      telefone: String(formData.get('telefone') || '').replace(/\D/g, ''),
+    };
+    const errors = {
+      nome: !payload.nome ? 'Informe o nome do profissional.' : '',
+      telefone: !/^\d{10,11}$/.test(payload.telefone) ? 'Use DDD e número, somente dígitos (10 ou 11).' : '',
+    };
+    Object.entries(errors).forEach(([field, message]) => {
+      form.querySelector(`[data-error="${field}"]`).textContent = message;
+    });
+    if (Object.values(errors).some(Boolean)) return;
+
+    const confirmed = await confirmAction(
+      current ? 'Confirmar alteração' : 'Confirmar cadastro',
+      current ? `Salvar as alterações do profissional ${payload.nome}?` : `Cadastrar ${payload.nome} nesta empresa?`,
+    );
+    if (!confirmed) return;
+
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await apiFetch(current ? `/profissionais/${current.id}` : '/profissionais', {
+        method: current ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      dialog.close();
+      showToast(current ? 'Profissional atualizado com sucesso.' : 'Profissional cadastrado com sucesso.');
+      await loadProfessionals();
+    } catch (error) {
+      showToast(`Não foi possível salvar o profissional: ${error.message}`, 'error');
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
+}
+
+async function toggleProfessional(professionalId, active) {
+  const confirmed = await confirmAction(
+    active ? 'Desativar profissional' : 'Ativar profissional',
+    `Confirma ${active ? 'desativar' : 'ativar'} este profissional? O histórico será mantido.`,
+  );
+  if (!confirmed) return;
+
+  try {
+    await apiFetch(`/profissionais/${professionalId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ativo: !active }),
+    });
+    showToast(`Profissional ${active ? 'desativado' : 'ativado'} com sucesso.`);
+    await loadProfessionals();
+  } catch (error) {
+    showToast(`Não foi possível atualizar a situação: ${error.message}`, 'error');
+  }
+}
+
+async function showProfessionalDetails(professionalId) {
+  const dialog = document.querySelector('#professional-dialog');
+  const title = document.querySelector('#professional-dialog-title');
+  const content = document.querySelector('#professional-dialog-content');
+  content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando informações...</span></div>';
+  dialog.showModal();
+
+  try {
+    const [professional, journey] = await Promise.all([
+      apiFetch(`/profissionais/${professionalId}`),
+      apiFetch(`/profissionais/${professionalId}/jornada`),
+    ]);
+    title.textContent = professional.nome;
+    content.innerHTML = `
+      <div class="entity-details">
+        <dl>
+          <div><dt>Nome</dt><dd>${escapeHtml(professional.nome)}</dd></div>
+          <div><dt>Telefone</dt><dd>${escapeHtml(formatPhone(professional.telefone))}</dd></div>
+          <div><dt>Situação</dt><dd>${professional.ativo ? 'Ativo' : 'Inativo'}</dd></div>
+          <div><dt>Horários de trabalho</dt><dd>${escapeHtml(formatWorkSchedule(journey.horarios))}</dd></div>
+        </dl>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" id="professional-agenda">Acessar agenda</button>
+          <button class="action-button" type="button" id="edit-professional-detail">Editar</button>
+        </div>
+      </div>
+    `;
+    content.querySelector('#professional-agenda').addEventListener('click', () => showProfessionalAgenda(professional.id));
+    content.querySelector('#edit-professional-detail').addEventListener('click', () => openProfessionalForm(professional));
+  } catch (error) {
+    content.innerHTML = `<p class="form-error">Não foi possível consultar o profissional: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function showProfessionalAgenda(professionalId) {
+  const dialog = document.querySelector('#professional-dialog');
+  const title = document.querySelector('#professional-dialog-title');
+  const content = document.querySelector('#professional-dialog-content');
+  title.textContent = 'Agenda individual';
+  content.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando profissional...</span></div>';
+  if (!dialog.open) dialog.showModal();
+
+  try {
+    const [professional, journey] = await Promise.all([
+      apiFetch(`/profissionais/${professionalId}`),
+      apiFetch(`/profissionais/${professionalId}/jornada`),
+    ]);
+    title.textContent = `Agenda · ${professional.nome}`;
+    content.innerHTML = `
+      <div class="agenda-schedule"><strong>Jornada semanal</strong><span>${escapeHtml(formatWorkSchedule(journey.horarios))}</span></div>
+      <form class="agenda-date-form" id="professional-agenda-form">
+        <label>Data da agenda<input type="date" name="data" required value="${localDateKey(new Date())}" /></label>
+        <button class="action-button" type="submit">Consultar agenda</button>
+      </form>
+      <div id="professional-agenda-results" class="agenda-results"></div>
+    `;
+    const dateInput = content.querySelector('[name="data"]');
+    const form = content.querySelector('#professional-agenda-form');
+    const refreshAgenda = () => loadProfessionalAgenda(professionalId, dateInput.value);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      refreshAgenda();
+    });
+    refreshAgenda();
+  } catch (error) {
+    content.innerHTML = `<p class="form-error">Não foi possível carregar a agenda: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function loadProfessionalAgenda(professionalId, date) {
+  const results = document.querySelector('#professional-agenda-results');
+  if (!results) return;
+  results.innerHTML = '<div class="table-state"><span class="spinner" aria-label="Carregando"></span><span>Carregando agenda...</span></div>';
+  try {
+    const appointments = await apiFetch(`/agendamentos?profissionalId=${professionalId}&data=${encodeURIComponent(date)}`);
+    if (!Array.isArray(appointments)) throw new Error('A API retornou uma agenda inválida.');
+    results.innerHTML = appointments.length
+      ? `<div class="history-list">${appointments.map((appointment) => `
+          <article class="history-item">
+            <div><strong>${escapeHtml(formatTime(appointment.inicio))} · ${escapeHtml(appointment.cliente?.nome || 'Cliente não informado')}</strong><span>${escapeHtml(appointment.servicos?.map((item) => item.servico?.nome).filter(Boolean).join(', ') || 'Serviço não informado')}</span></div>
+            <span class="status-badge status-${String(appointment.status).toLowerCase()}">${escapeHtml(appointmentStatusLabels[appointment.status] || appointment.status)}</span>
+          </article>
+        `).join('')}</div>`
+      : '<div class="table-state"><strong>Nenhum agendamento nesta data</strong></div>';
+  } catch (error) {
+    results.innerHTML = `<p class="form-error">Não foi possível carregar os agendamentos: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
 async function companySelectionContent() {
   const container = document.querySelector('#content');
   container.innerHTML = `
@@ -859,6 +1150,7 @@ async function renderRoute() {
     loadDashboard();
   }
   if (page.id === 'clientes') initClientsPage();
+  if (page.id === 'profissionais') initProfessionalsPage();
   closeMenu();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'smooth' });

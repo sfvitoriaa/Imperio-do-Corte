@@ -47,6 +47,7 @@ model Cliente {
 model Profissional {
   id           Int           @id @default(autoincrement())
   nome         String
+  telefone     String?
   ativo        Boolean       @default(true)
   empresa      Empresa?      @relation(fields: [empresaId], references: [id])
   empresaId    Int?
